@@ -15,22 +15,32 @@ from tqdm import tqdm
 
 def load_existing_player_info():
     """
-    Load player metadata from existing players_info.csv.
+    Load player metadata from data/players_info.csv.
 
     Returns:
         pandas DataFrame with player metadata
     """
-    # Try to find the players_info.csv file
+    # Path to players_info.csv
     project_root = Path(__file__).parent.parent
-    player_info_file = project_root.parent / 'players_info.csv'
+    player_info_file = project_root / 'data' / 'players_info.csv'
 
     if not player_info_file.exists():
         print(f"Warning: players_info.csv not found at {player_info_file}")
         print("Creating empty metadata template...")
-        return pd.DataFrame(columns=['player_id', 'full_name', 'batting_style', 'bowling_style', 'playing_role'])
+        return pd.DataFrame(columns=['identifier', 'name', 'full_name', 'batting_styles', 'bowling_styles', 'playing_roles'])
 
     print(f"Loading player info from {player_info_file}...")
     player_info = pd.read_csv(player_info_file)
+    
+    # Clean column names
+    player_info.columns = player_info.columns.str.strip()
+    
+    # Clean IDs: convert to string and remove .0
+    if 'identifier' in player_info.columns:
+        player_info['identifier'] = player_info['identifier'].astype(str).str.replace(r'\.0$', '', regex=True)
+        
+    # Replace "Not found" with None
+    player_info = player_info.replace('Not found', None)
 
     print(f"✓ Loaded {len(player_info)} players from existing data")
 
@@ -39,11 +49,11 @@ def load_existing_player_info():
 
 def map_player_ids(ipl_df, player_meta_df):
     """
-    Map player IDs from IPL data to player metadata.
+    Map player IDs from IPL data to player metadata using ID matching.
 
     Args:
         ipl_df: IPL ball-by-ball DataFrame
-        player_meta_df: Player metadata DataFrame
+        player_meta_df: Player metadata DataFrame (from players_info.csv)
 
     Returns:
         DataFrame with mapped player information
@@ -61,6 +71,9 @@ def map_player_ids(ipl_df, player_meta_df):
     # Combine and remove duplicates
     all_players = pd.concat([batters, bowlers, non_strikers]).drop_duplicates()
     all_players = all_players[all_players['player_id'].notna()]
+    
+    # Clean IPL IDs
+    all_players['player_id'] = all_players['player_id'].astype(str).str.replace(r'\.0$', '', regex=True)
 
     print(f"\n✓ Found {len(all_players)} unique players in IPL data")
 
@@ -69,25 +82,81 @@ def map_player_ids(ipl_df, player_meta_df):
         print("⚠ No existing player metadata found - creating basic template")
         return all_players
 
-    # Convert player_id to string for merging
-    all_players['player_id'] = all_players['player_id'].astype(str)
+    # Merge with metadata using 'identifier' from info file and 'player_id' from IPL
+    # Rename info columns to match expected output format
+    player_meta_df = player_meta_df.rename(columns={
+        'identifier': 'player_id',
+        'playing_roles': 'playing_role',
+        'batting_styles': 'batting_style',
+        'bowling_styles': 'bowling_style'
+    })
+    
+    # Ensure player_id is string in metadata
     if 'player_id' in player_meta_df.columns:
         player_meta_df['player_id'] = player_meta_df['player_id'].astype(str)
 
-    # Merge with metadata
+    # Merge
     merged = all_players.merge(
         player_meta_df,
         on='player_id',
         how='left'
     )
+    
+    # Load and merge manual updates
+    project_root = Path(__file__).parent.parent
+    manual_update_file = project_root / 'data' / 'updated_players_export.csv'
+    
+    if manual_update_file.exists():
+        print(f"\nLoading manual updates from {manual_update_file}...")
+        manual_updates = pd.read_csv(manual_update_file)
+        
+        # Ensure player_id is string
+        if 'player_id' in manual_updates.columns:
+            manual_updates['player_id'] = manual_updates['player_id'].astype(str)
+            
+        # Merge manual updates
+        merged = merged.merge(
+            manual_updates[['player_id', 'new_role_category']],
+            on='player_id',
+            how='left'
+        )
+        
+        # Update playing_role where available
+        mask = merged['new_role_category'].notna()
+        merged.loc[mask, 'playing_role'] = merged.loc[mask, 'new_role_category']
+        
+        # Drop temporary column
+        merged = merged.drop(columns=['new_role_category'])
+        
+        print(f"✓ Applied manual updates for {mask.sum()} players")
 
     # Fill missing metadata
-    metadata_col = 'full_name' if 'full_name' in merged.columns else ('name' if 'name' in merged.columns else None)
-    if metadata_col:
-        matched = merged[metadata_col].notna().sum()
+    if 'playing_role' in merged.columns:
+        matched = merged['playing_role'].notna().sum()
         total = len(merged)
-        print(f"✓ Matched {matched}/{total} players ({matched/total*100:.1f}%)")
+        print(f"✓ Matched roles for {matched}/{total} players ({matched/total*100:.1f}%)")
 
+    # Merge country from player_metadata_full.csv if available
+    project_root = Path(__file__).parent.parent
+    full_meta_file = project_root / 'data' / 'player_metadata_full.csv'
+    
+    if full_meta_file.exists():
+        print(f"\nLoading country data from {full_meta_file}...")
+        full_meta = pd.read_csv(full_meta_file)
+        
+        # Ensure player_id is string
+        if 'player_id' in full_meta.columns:
+            full_meta['player_id'] = full_meta['player_id'].astype(str)
+            
+            # Merge country
+            if 'country' in full_meta.columns:
+                merged = merged.merge(
+                    full_meta[['player_id', 'country']],
+                    on='player_id',
+                    how='left'
+                )
+                print(f"✓ Merged country data for {merged['country'].notna().sum()} players")
+    
     return merged
 
 
@@ -119,18 +188,18 @@ def categorize_players(metadata_df):
     # Bowling type: pace or spin
     def categorize_bowling(style):
         if pd.isna(style):
-            return 'unknown'
+            return 'pace' # Default to pace as requested
         style_str = str(style).upper()
 
         # Spin indicators
-        if any(indicator in style_str for indicator in ['SL', 'OB', 'LB', 'LBG', 'SLOW']):
+        if any(indicator in style_str for indicator in ['SL', 'OB', 'LB', 'LBG', 'SLOW', 'LEG', 'OFF', 'BREAK', 'GOOGLY', 'ORTHODOX', 'CHINAMAN']):
             return 'spin'
 
         # Pace indicators
-        if any(indicator in style_str for indicator in ['FAST', 'MEDIUM', 'F', 'M']):
+        if any(indicator in style_str for indicator in ['FAST', 'MEDIUM', 'F', 'M', 'SEAM']):
             return 'pace'
 
-        return 'unknown'
+        return 'pace' # Default to pace for unknown styles
 
     metadata_df['bowling_type'] = metadata_df['bowling_style'].apply(categorize_bowling)
 
@@ -140,23 +209,43 @@ def categorize_players(metadata_df):
     )
 
     # Standardize playing role
-    def standardize_role(role):
+    def standardize_role(row):
+        role = row['playing_role']
+        b_type = row['bowling_type']
+        
         if pd.isna(role):
-            return 'unknown'
+            return 'Middle-order Batter' # Default fallback
+            
         role_str = str(role).lower()
 
-        if 'all' in role_str:
-            return 'allrounder'
-        elif 'bat' in role_str:
-            return 'batter'
-        elif 'bowl' in role_str:
-            return 'bowler'
-        elif 'keep' in role_str or 'wicket' in role_str:
-            return 'wicketkeeper'
-        else:
-            return 'unknown'
+        # Wicketkeeper
+        if 'keep' in role_str or 'wicket' in role_str:
+            return 'Wicketkeeper'
+            
+        # Allrounder
+        if 'all' in role_str or 'rounder' in role_str:
+            return 'Allrounder'
+            
+        # Batters
+        if 'bat' in role_str:
+            if 'open' in role_str or 'top' in role_str:
+                return 'Top-order Batter'
+            elif 'middle' in role_str:
+                return 'Middle-order Batter'
+            else:
+                # Generic 'Batter' -> Middle-order (smaller category)
+                return 'Middle-order Batter'
+                
+        # Bowlers
+        if 'bowl' in role_str:
+            if b_type == 'spin':
+                return 'Spinner'
+            else:
+                return 'Pacer'
+                
+        return 'Middle-order Batter' # Fallback
 
-    metadata_df['role_category'] = metadata_df['playing_role'].apply(standardize_role)
+    metadata_df['role_category'] = metadata_df.apply(standardize_role, axis=1)
 
     # Statistics
     print("\nPlayer categories:")

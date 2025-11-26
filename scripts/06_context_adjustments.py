@@ -311,8 +311,8 @@ def aggregate_player_raa(df: pd.DataFrame) -> tuple:
     print("="*70)
 
     # Aggregate batter RAA
-    print("\nAggregating batter RAA...")
-    batter_raa = df.groupby(['batter_id', 'batter_name']).agg({
+    print("\nAggregating batter RAA by season...")
+    batter_raa = df.groupby(['season', 'batter_id', 'batter_name']).agg({
         'batter_RAA': ['sum', 'mean', 'count'],
         'weighted_run_value': 'sum'
     }).round(4)
@@ -324,8 +324,8 @@ def aggregate_player_raa(df: pd.DataFrame) -> tuple:
     print(f"✓ Aggregated RAA for {len(batter_raa)} batters")
 
     # Aggregate bowler RAA
-    print("Aggregating bowler RAA...")
-    bowler_raa = df.groupby(['bowler_id', 'bowler_name']).agg({
+    print("Aggregating bowler RAA by season...")
+    bowler_raa = df.groupby(['season', 'bowler_id', 'bowler_name']).agg({
         'bowler_RAA': ['sum', 'mean', 'count'],
         'weighted_run_value': 'sum'
     }).round(4)
@@ -338,14 +338,14 @@ def aggregate_player_raa(df: pd.DataFrame) -> tuple:
 
     # Show top performers
     print("\n" + "-"*70)
-    print("TOP 10 BATTERS BY RAA")
+    print("TOP 10 BATTERS BY RAA (2025)")
     print("-"*70)
-    print(batter_raa.head(10)[['batter_name', 'RAA', 'balls_faced', 'RAA_per_ball']].to_string(index=False))
+    print(batter_raa[batter_raa['season'] == '2025'].head(10)[['batter_name', 'RAA', 'balls_faced', 'RAA_per_ball']].to_string(index=False))
 
     print("\n" + "-"*70)
-    print("TOP 10 BOWLERS BY RAA")
+    print("TOP 10 BOWLERS BY RAA (2025)")
     print("-"*70)
-    print(bowler_raa.head(10)[['bowler_name', 'RAA', 'balls_bowled', 'RAA_per_ball']].to_string(index=False))
+    print(bowler_raa[bowler_raa['season'] == '2025'].head(10)[['bowler_name', 'RAA', 'balls_bowled', 'RAA_per_ball']].to_string(index=False))
 
     return batter_raa, bowler_raa
 

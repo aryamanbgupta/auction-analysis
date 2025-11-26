@@ -74,18 +74,27 @@ def define_replacement_level_batters(batter_raa: pd.DataFrame, min_balls: int = 
     print(f"  Minimum balls faced: {min_balls}")
     print(f"  Qualified batters: {len(qualified_batters)} / {len(batter_raa)}")
 
-    # Calculate replacement level threshold (bottom percentile)
-    threshold = qualified_batters['RAA_per_ball'].quantile(percentile)
-
-    print(f"\nReplacement level threshold:")
-    print(f"  Percentile: {percentile*100:.0f}th (bottom {percentile*100:.0f}%)")
-    print(f"  RAA per ball threshold: {threshold:.4f}")
-
-    # Mark replacement-level batters
-    batter_raa['is_replacement'] = (
-        (batter_raa['balls_faced'] >= min_balls) &
-        (batter_raa['RAA_per_ball'] <= threshold)
-    )
+    # Calculate replacement level threshold per season
+    print(f"\nReplacement level thresholds (bottom {percentile*100:.0f}%):")
+    
+    # Initialize is_replacement column
+    batter_raa['is_replacement'] = False
+    
+    for season in sorted(batter_raa['season'].unique()):
+        season_batters = qualified_batters[qualified_batters['season'] == season]
+        if len(season_batters) == 0:
+            continue
+            
+        threshold = season_batters['RAA_per_ball'].quantile(percentile)
+        print(f"  {season}: {threshold:.4f} (n={len(season_batters)})")
+        
+        # Mark replacement players for this season
+        mask = (
+            (batter_raa['season'] == season) &
+            (batter_raa['balls_faced'] >= min_balls) &
+            (batter_raa['RAA_per_ball'] <= threshold)
+        )
+        batter_raa.loc[mask, 'is_replacement'] = True
 
     replacement_batters = batter_raa[batter_raa['is_replacement']]
 
@@ -130,18 +139,27 @@ def define_replacement_level_bowlers(bowler_raa: pd.DataFrame, min_balls: int = 
     print(f"  Minimum balls bowled: {min_balls}")
     print(f"  Qualified bowlers: {len(qualified_bowlers)} / {len(bowler_raa)}")
 
-    # Calculate replacement level threshold (bottom percentile)
-    threshold = qualified_bowlers['RAA_per_ball'].quantile(percentile)
-
-    print(f"\nReplacement level threshold:")
-    print(f"  Percentile: {percentile*100:.0f}th (bottom {percentile*100:.0f}%)")
-    print(f"  RAA per ball threshold: {threshold:.4f}")
-
-    # Mark replacement-level bowlers
-    bowler_raa['is_replacement'] = (
-        (bowler_raa['balls_bowled'] >= min_balls) &
-        (bowler_raa['RAA_per_ball'] <= threshold)
-    )
+    # Calculate replacement level threshold per season
+    print(f"\nReplacement level thresholds (bottom {percentile*100:.0f}%):")
+    
+    # Initialize is_replacement column
+    bowler_raa['is_replacement'] = False
+    
+    for season in sorted(bowler_raa['season'].unique()):
+        season_bowlers = qualified_bowlers[qualified_bowlers['season'] == season]
+        if len(season_bowlers) == 0:
+            continue
+            
+        threshold = season_bowlers['RAA_per_ball'].quantile(percentile)
+        print(f"  {season}: {threshold:.4f} (n={len(season_bowlers)})")
+        
+        # Mark replacement players for this season
+        mask = (
+            (bowler_raa['season'] == season) &
+            (bowler_raa['balls_bowled'] >= min_balls) &
+            (bowler_raa['RAA_per_ball'] <= threshold)
+        )
+        bowler_raa.loc[mask, 'is_replacement'] = True
 
     replacement_bowlers = bowler_raa[bowler_raa['is_replacement']]
 
@@ -177,38 +195,30 @@ def calculate_avg_raa_rep(batter_raa: pd.DataFrame, bowler_raa: pd.DataFrame) ->
     replacement_batters = batter_raa[batter_raa['is_replacement']]
     replacement_bowlers = bowler_raa[bowler_raa['is_replacement']]
 
-    # Calculate weighted average (weighted by balls)
-    avg_raa_rep_bat = (
-        (replacement_batters['RAA'] * replacement_batters['balls_faced']).sum() /
-        replacement_batters['balls_faced'].sum()
-    ) / replacement_batters['balls_faced'].mean()  # Normalize to per-ball
-
-    avg_raa_rep_bowl = (
-        (replacement_bowlers['RAA'] * replacement_bowlers['balls_bowled']).sum() /
-        replacement_bowlers['balls_bowled'].sum()
-    ) / replacement_bowlers['balls_bowled'].mean()  # Normalize to per-ball
-
-    # Alternative: simple mean of RAA_per_ball
-    avg_raa_rep_bat_simple = replacement_batters['RAA_per_ball'].mean()
-    avg_raa_rep_bowl_simple = replacement_bowlers['RAA_per_ball'].mean()
-
-    print(f"\nAverage RAA per ball for replacement level:")
-    print(f"  Batters (weighted):  {avg_raa_rep_bat:.4f}")
-    print(f"  Batters (simple):    {avg_raa_rep_bat_simple:.4f}")
-    print(f"  Bowlers (weighted):  {avg_raa_rep_bowl:.4f}")
-    print(f"  Bowlers (simple):    {avg_raa_rep_bowl_simple:.4f}")
-
-    # Use simple mean (more interpretable and standard in WAR calculations)
+    # Calculate average RAA per ball for replacement level per season
+    print(f"\nAverage RAA per ball for replacement level (Simple Mean):")
+    
     results = {
-        'avg_raa_rep_batting': float(avg_raa_rep_bat_simple),
-        'avg_raa_rep_bowling': float(avg_raa_rep_bowl_simple),
-        'n_replacement_batters': int(len(replacement_batters)),
-        'n_replacement_bowlers': int(len(replacement_bowlers)),
+        'batting': {},
+        'bowling': {}
     }
-
-    print(f"\n✓ Using simple mean for VORP calculation")
-    print(f"  avg.RAA_rep (batting):  {results['avg_raa_rep_batting']:.4f}")
-    print(f"  avg.RAA_rep (bowling):  {results['avg_raa_rep_bowling']:.4f}")
+    
+    seasons = sorted(set(batter_raa['season'].unique()) | set(bowler_raa['season'].unique()))
+    
+    for season in seasons:
+        # Batting
+        rep_batters = replacement_batters[replacement_batters['season'] == season]
+        if len(rep_batters) > 0:
+            avg_bat = rep_batters['RAA_per_ball'].mean()
+            results['batting'][str(season)] = float(avg_bat)
+            print(f"  {season} Batting: {avg_bat:.4f} (n={len(rep_batters)})")
+        
+        # Bowling
+        rep_bowlers = replacement_bowlers[replacement_bowlers['season'] == season]
+        if len(rep_bowlers) > 0:
+            avg_bowl = rep_bowlers['RAA_per_ball'].mean()
+            results['bowling'][str(season)] = float(avg_bowl)
+            print(f"  {season} Bowling: {avg_bowl:.4f} (n={len(rep_bowlers)})")
 
     return results
 

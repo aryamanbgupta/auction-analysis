@@ -85,6 +85,15 @@ def fetch_player_metadata_by_name(cricketdata, player_name: str):
             # Return first row as dict, include cricinfo_id
             result = meta_df.iloc[0].to_dict()
             result['cricinfo_id'] = cricinfo_id
+            
+            # Debug: Print keys for the first few successful fetches
+            if 'debug_counter' not in globals():
+                globals()['debug_counter'] = 0
+            if globals()['debug_counter'] < 5:
+                print(f"\nDEBUG: Keys for {player_name}: {list(result.keys())}")
+                print(f"DEBUG: playing_role value: {result.get('playing_role')}")
+                globals()['debug_counter'] += 1
+                
             return result
         else:
             return None
@@ -171,7 +180,7 @@ def main():
     # Paths
     project_root = Path(__file__).parent.parent
     ipl_file = project_root / 'data' / 'ipl_matches.parquet'
-    output_file = project_root / 'data' / 'player_metadata.csv'
+    output_file = project_root / 'data' / 'player_metadata_full.csv'
 
     print("="*70)
     print("FETCHING PLAYER METADATA FROM CRICKETDATA R PACKAGE")

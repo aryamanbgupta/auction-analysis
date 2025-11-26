@@ -70,45 +70,43 @@ def calculate_bootstrap_war(df_bootstrap: pd.DataFrame, avg_raa_rep: dict) -> tu
     Returns:
         Tuple of (batter_war, bowler_war, rpw)
     """
-    # Aggregate RAA by player
-    batter_raa = df_bootstrap.groupby(['batter_id', 'batter_name']).agg({
-        'batter_RAA': 'sum',
-        'match_id': 'count'
+    # Calculate VORP per ball
+    # We need to map season to replacement level
+    # avg_raa_rep structure: {'batting': {'2022': val, ...}, 'bowling': {'2022': val, ...}}
+    
+    # Create mapping dictionaries
+    bat_rep_map = {int(k): v for k, v in avg_raa_rep['batting'].items()}
+    bowl_rep_map = {int(k): v for k, v in avg_raa_rep['bowling'].items()}
+    
+    # Map replacement level to each ball
+    df_bootstrap['rep_level_bat'] = df_bootstrap['season'].map(bat_rep_map)
+    df_bootstrap['rep_level_bowl'] = df_bootstrap['season'].map(bowl_rep_map)
+    
+    # Calculate VORP for each ball
+    df_bootstrap['vorp_bat'] = df_bootstrap['batter_RAA'] - df_bootstrap['rep_level_bat']
+    df_bootstrap['vorp_bowl'] = df_bootstrap['bowler_RAA'] - df_bootstrap['rep_level_bowl']
+    
+    # Aggregate by player
+    batter_agg = df_bootstrap.groupby(['batter_id', 'batter_name']).agg({
+        'vorp_bat': 'sum'
     }).reset_index()
-    batter_raa.columns = ['batter_id', 'batter_name', 'RAA', 'balls_faced']
-
-    bowler_raa = df_bootstrap.groupby(['bowler_id', 'bowler_name']).agg({
-        'bowler_RAA': 'sum',
-        'match_id': 'count'
+    
+    bowler_agg = df_bootstrap.groupby(['bowler_id', 'bowler_name']).agg({
+        'vorp_bowl': 'sum'
     }).reset_index()
-    bowler_raa.columns = ['bowler_id', 'bowler_name', 'RAA', 'balls_bowled']
-
-    # Calculate VORP
-    batter_raa['VORP'] = (
-        batter_raa['RAA'] -
-        (avg_raa_rep['avg_raa_rep_batting'] * batter_raa['balls_faced'])
-    )
-
-    bowler_raa['VORP'] = (
-        bowler_raa['RAA'] -
-        (avg_raa_rep['avg_raa_rep_bowling'] * bowler_raa['balls_bowled'])
-    )
 
     # Estimate RPW (simplified - use linear approximation)
     # For speed, we'll use a fixed RPW or calculate quickly
     # Full RPW calculation is expensive, so we use overall RPW
     # In practice, could cache or use approximate method
-
-    # Quick RPW estimate: use the ratio from full data
-    # For now, we'll use a simplified version
     rpw = 100.0  # Placeholder - could be calculated per bootstrap
 
     # Calculate WAR
-    batter_raa['WAR'] = batter_raa['VORP'] / rpw
-    bowler_raa['WAR'] = bowler_raa['VORP'] / rpw
+    batter_agg['WAR'] = batter_agg['vorp_bat'] / rpw
+    bowler_agg['WAR'] = bowler_agg['vorp_bowl'] / rpw
 
-    return batter_raa[['batter_id', 'batter_name', 'WAR']], \
-           bowler_raa[['bowler_id', 'bowler_name', 'WAR']], \
+    return batter_agg[['batter_id', 'batter_name', 'WAR']], \
+           bowler_agg[['bowler_id', 'bowler_name', 'WAR']], \
            rpw
 
 

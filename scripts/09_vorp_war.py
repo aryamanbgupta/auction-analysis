@@ -59,9 +59,7 @@ def load_avg_raa_rep(input_dir: Path) -> dict:
     with open(avg_raa_file, 'r') as f:
         avg_raa_rep = json.load(f)
 
-    print(f"✓ avg.RAA_rep (batting):  {avg_raa_rep['avg_raa_rep_batting']:.4f}")
-    print(f"✓ avg.RAA_rep (bowling):  {avg_raa_rep['avg_raa_rep_bowling']:.4f}")
-
+    print(f"✓ Loaded avg.RAA_rep for {len(avg_raa_rep['batting'])} seasons")
     return avg_raa_rep
 
 
@@ -86,27 +84,44 @@ def calculate_vorp(batter_raa: pd.DataFrame, bowler_raa: pd.DataFrame,
 
     # Calculate VORP for batters
     print("\nCalculating batter VORP...")
+    
+    # Map season to avg_raa_rep
+    batter_raa['avg_raa_rep'] = batter_raa['season'].astype(str).map(avg_raa_rep['batting'])
+    
+    # Fill missing seasons with mean (fallback)
+    if batter_raa['avg_raa_rep'].isnull().any():
+        mean_rep = np.mean(list(avg_raa_rep['batting'].values()))
+        batter_raa['avg_raa_rep'].fillna(mean_rep, inplace=True)
+        print("  Warning: Some seasons missing replacement level, used mean.")
+
     batter_raa['VORP'] = (
         batter_raa['RAA'] -
-        (avg_raa_rep['avg_raa_rep_batting'] * batter_raa['balls_faced'])
+        (batter_raa['avg_raa_rep'] * batter_raa['balls_faced'])
     )
     batter_raa['VORP_per_ball'] = batter_raa['VORP'] / batter_raa['balls_faced']
 
     print(f"✓ Calculated VORP for {len(batter_raa)} batters")
     print(f"  Mean VORP: {batter_raa['VORP'].mean():.2f}")
-    print(f"  Std VORP:  {batter_raa['VORP'].std():.2f}")
 
     # Calculate VORP for bowlers
     print("\nCalculating bowler VORP...")
+    
+    # Map season to avg_raa_rep
+    bowler_raa['avg_raa_rep'] = bowler_raa['season'].astype(str).map(avg_raa_rep['bowling'])
+    
+    # Fill missing seasons with mean
+    if bowler_raa['avg_raa_rep'].isnull().any():
+        mean_rep = np.mean(list(avg_raa_rep['bowling'].values()))
+        bowler_raa['avg_raa_rep'].fillna(mean_rep, inplace=True)
+
     bowler_raa['VORP'] = (
         bowler_raa['RAA'] -
-        (avg_raa_rep['avg_raa_rep_bowling'] * bowler_raa['balls_bowled'])
+        (bowler_raa['avg_raa_rep'] * bowler_raa['balls_bowled'])
     )
     bowler_raa['VORP_per_ball'] = bowler_raa['VORP'] / bowler_raa['balls_bowled']
 
     print(f"✓ Calculated VORP for {len(bowler_raa)} bowlers")
     print(f"  Mean VORP: {bowler_raa['VORP'].mean():.2f}")
-    print(f"  Std VORP:  {bowler_raa['VORP'].std():.2f}")
 
     return batter_raa, bowler_raa
 
@@ -225,51 +240,29 @@ def estimate_runs_per_win(data_file: Path) -> float:
 
     print(f"✓ Created {len(team_df)} team-level observations")
 
-    # Regression: Win ~ RunDiff
-    print("\nFitting regression: Win ~ RunDiff")
-    X = team_df['run_diff'].values.reshape(-1, 1)
-    y = team_df['won'].values
-
-    # Add constant
-    X = sm.add_constant(X)
-
-    # Fit logistic regression (more appropriate for binary outcome)
-    # But we'll also fit OLS for comparison with paper
-    print("\n1. OLS Regression (for comparison):")
-    ols_model = sm.OLS(y, X).fit()
-    beta_ols = ols_model.params[1]
-    rpw_ols = 1 / beta_ols
-
-    print(f"  β (slope):     {beta_ols:.6f}")
-    print(f"  RPW (1/β):     {rpw_ols:.2f}")
-    print(f"  R-squared:     {ols_model.rsquared:.4f}")
-    print(f"  p-value:       {ols_model.pvalues[1]:.4e}")
-
-    # Logistic regression
-    print("\n2. Logistic Regression (binary outcome):")
-    logit_model = sm.Logit(y, X).fit(disp=0)
-    beta_logit = logit_model.params[1]
-    # For logistic: approximate RPW at midpoint (50% win probability)
-    # P(win) = 1/(1 + exp(-β₀ - β₁*RunDiff))
-    # At P=0.5: RunDiff = 0, marginal effect = β₁/4
-    rpw_logit = 1 / (beta_logit / 4)
-
-    print(f"  β (slope):     {beta_logit:.6f}")
-    print(f"  RPW (approx):  {rpw_logit:.2f}")
-    print(f"  Pseudo R²:     {logit_model.prsquared:.4f}")
-    print(f"  p-value:       {logit_model.pvalues[1]:.4e}")
-
-    # Use OLS estimate (simpler, more comparable to baseball WAR)
-    rpw = rpw_ols
-
-    print(f"\n✓ Using OLS estimate: RPW = {rpw:.2f} runs")
-
-    # Interpretation
-    print(f"\nInterpretation:")
-    print(f"  A team needs ~{rpw:.0f} additional runs to increase")
-    print(f"  their probability of winning by 1 game (on average).")
-
-    return rpw, ols_model
+    # Add season column to team_df
+    # We need to map match_id to season
+    match_season = df[['match_id', 'season']].drop_duplicates()
+    team_df = team_df.merge(match_season, on='match_id', how='left')
+    
+    rpw_dict = {}
+    
+    print("\nCalculating RPW per season:")
+    for season in sorted(team_df['season'].unique()):
+        season_data = team_df[team_df['season'] == season]
+        
+        X = season_data['run_diff'].values.reshape(-1, 1)
+        y = season_data['won'].values
+        X = sm.add_constant(X)
+        
+        model = sm.OLS(y, X).fit()
+        beta = model.params[1]
+        rpw = 1 / beta
+        
+        rpw_dict[str(season)] = rpw
+        print(f"  {season}: {rpw:.2f} runs/win (R2={model.rsquared:.3f}, n={len(season_data)})")
+        
+    return rpw_dict, None
 
 
 def calculate_war(batter_vorp: pd.DataFrame, bowler_vorp: pd.DataFrame,
@@ -292,22 +285,36 @@ def calculate_war(batter_vorp: pd.DataFrame, bowler_vorp: pd.DataFrame,
     print("="*70)
 
     # Calculate WAR for batters
-    print(f"\nCalculating batter WAR (VORP / {rpw:.2f})...")
-    batter_vorp['WAR'] = batter_vorp['VORP'] / rpw
+    print(f"\nCalculating batter WAR...")
+    
+    # Map season to RPW
+    batter_vorp['rpw'] = batter_vorp['season'].astype(str).map(rpw)
+    # Fill missing
+    if batter_vorp['rpw'].isnull().any():
+        mean_rpw = np.mean(list(rpw.values()))
+        batter_vorp['rpw'].fillna(mean_rpw, inplace=True)
+        
+    batter_vorp['WAR'] = batter_vorp['VORP'] / batter_vorp['rpw']
     batter_vorp['WAR_per_ball'] = batter_vorp['WAR'] / batter_vorp['balls_faced']
 
     print(f"✓ Calculated WAR for {len(batter_vorp)} batters")
     print(f"  Mean WAR: {batter_vorp['WAR'].mean():.4f}")
-    print(f"  Std WAR:  {batter_vorp['WAR'].std():.4f}")
 
     # Calculate WAR for bowlers
-    print(f"\nCalculating bowler WAR (VORP / {rpw:.2f})...")
-    bowler_vorp['WAR'] = bowler_vorp['VORP'] / rpw
+    print(f"\nCalculating bowler WAR...")
+    
+    # Map season to RPW
+    bowler_vorp['rpw'] = bowler_vorp['season'].astype(str).map(rpw)
+    # Fill missing
+    if bowler_vorp['rpw'].isnull().any():
+        mean_rpw = np.mean(list(rpw.values()))
+        bowler_vorp['rpw'].fillna(mean_rpw, inplace=True)
+
+    bowler_vorp['WAR'] = bowler_vorp['VORP'] / bowler_vorp['rpw']
     bowler_vorp['WAR_per_ball'] = bowler_vorp['WAR'] / bowler_vorp['balls_bowled']
 
     print(f"✓ Calculated WAR for {len(bowler_vorp)} bowlers")
     print(f"  Mean WAR: {bowler_vorp['WAR'].mean():.4f}")
-    print(f"  Std WAR:  {bowler_vorp['WAR'].std():.4f}")
 
     return batter_vorp, bowler_vorp
 
@@ -387,23 +394,10 @@ def save_vorp_war_results(batter_war: pd.DataFrame, bowler_war: pd.DataFrame,
     print(f"✓ Saved bowler WAR to {bowler_file}")
 
     # Save RPW estimate
-    rpw_data = {
-        'runs_per_win': float(rpw),
-        'ols_beta': float(rpw_model.params[1]),
-        'ols_r_squared': float(rpw_model.rsquared),
-        'ols_p_value': float(rpw_model.pvalues[1]),
-    }
-
     rpw_file = output_dir / 'runs_per_win.json'
     with open(rpw_file, 'w') as f:
-        json.dump(rpw_data, f, indent=2)
+        json.dump(rpw, f, indent=2)
     print(f"✓ Saved RPW estimate to {rpw_file}")
-
-    # Save RPW model summary
-    rpw_summary_file = output_dir / 'rpw_model_summary.txt'
-    with open(rpw_summary_file, 'w') as f:
-        f.write(str(rpw_model.summary()))
-    print(f"✓ Saved RPW model summary to {rpw_summary_file}")
 
     print(f"\n✓ All results saved to {output_dir}")
 

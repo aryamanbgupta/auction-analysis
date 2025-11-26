@@ -161,7 +161,7 @@ def main():
 
     # Paths
     project_root = Path(__file__).parent.parent
-    cricsheet_dir = project_root.parent / 'data' / 't20s_json'
+    cricsheet_dir = project_root / 'data' / 'ipl_json'
     output_file = project_root / 'data' / 'ipl_matches.parquet'
 
     print(f"Reading Cricsheet files from: {cricsheet_dir}")
@@ -186,7 +186,7 @@ def main():
             match_data = load_cricsheet_match(json_file)
 
             # Check if it's an IPL match in our range
-            if is_ipl_match(match_data, year_start=2025, year_end=2025, exclude_years=[]):
+            if is_ipl_match(match_data, year_start=2022, year_end=2025, exclude_years=[]):
                 balls = extract_ball_data(match_data)
                 all_balls.extend(balls)
                 ipl_match_count += 1
