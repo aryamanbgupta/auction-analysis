@@ -3,13 +3,33 @@ import numpy as np
 from pathlib import Path
 from datetime import datetime
 
+# Venue Keywords for Home/Away mapping
+VENUE_KEYWORDS = {
+    'Chennai Super Kings': ['Chidambaram'],
+    'Royal Challengers Bengaluru': ['Chinnaswamy'],
+    'Royal Challengers Bangalore': ['Chinnaswamy'],
+    'Mumbai Indians': ['Wankhede', 'Brabourne', 'DY Patil'],
+    'Kolkata Knight Riders': ['Eden Gardens'],
+    'Delhi Capitals': ['Arun Jaitley', 'Feroz Shah Kotla'],
+    'Punjab Kings': ['Mohali', 'Bindra', 'Mullanpur', 'Dharamshala'],
+    'Rajasthan Royals': ['Sawai Mansingh', 'Guwahati'],
+    'Sunrisers Hyderabad': ['Rajiv Gandhi'],
+    'Lucknow Super Giants': ['Ekana'],
+    'Gujarat Titans': ['Narendra Modi', 'Motera']
+}
+
 def load_data():
-    """Load WAR data and player metadata."""
-    results_dir = Path(__file__).parent.parent / 'results' / '09_vorp_war'
-    data_dir = Path(__file__).parent.parent / 'data'
+    """Load WAR data, ball-by-ball data, and player metadata."""
+    project_root = Path(__file__).parent.parent
+    results_dir = project_root / 'results' / '09_vorp_war'
+    data_dir = project_root / 'data'
+    context_dir = project_root / 'results' / '06_context_adjustments'
     
     batter_war = pd.read_csv(results_dir / 'batter_war.csv')
     bowler_war = pd.read_csv(results_dir / 'bowler_war.csv')
+    
+    # Load ball-by-ball data for granular metrics
+    ball_data = pd.read_parquet(context_dir / 'ipl_with_raa.parquet')
     
     # Try to load full metadata first
     full_meta_path = data_dir / 'player_metadata_full.csv'
@@ -20,7 +40,12 @@ def load_data():
         metadata = pd.read_csv(data_dir / 'player_metadata.csv')
         print(f"Loaded metadata from {data_dir / 'player_metadata.csv'}")
     
-    return batter_war, bowler_war, metadata
+    # Ensure season is int
+    batter_war['season'] = batter_war['season'].astype(int)
+    bowler_war['season'] = bowler_war['season'].astype(int)
+    ball_data['season'] = ball_data['season'].astype(int)
+    
+    return batter_war, bowler_war, ball_data, metadata
 
 def calculate_age(dob_str, target_year):
     """Calculate age in years for a target season."""
@@ -33,55 +58,100 @@ def calculate_age(dob_str, target_year):
     except:
         return np.nan
 
-def create_lagged_features(df, id_col, name_col, metric_cols, lags=[1, 2]):
+def is_home_match(row, role):
+    """Determine if the match is at home for the player's team."""
+    venue = str(row['venue'])
+    
+    if role == 'batter':
+        team = row['batting_team']
+    else:
+        team = row['bowling_team']
+        
+    keywords = VENUE_KEYWORDS.get(team, [])
+    for kw in keywords:
+        if kw in venue:
+            return 1
+    return 0
+
+def calculate_advanced_metrics(ball_data, role):
     """
-    Create lagged features for time-series data.
+    Calculate Consistency (Std Dev of RAA) and Home/Away Splits.
     
     Args:
-        df: DataFrame with 'season', id_col, and metric_cols
-        id_col: Column name for player ID
-        metric_cols: List of columns to create lags for
-        lags: List of previous years to look back
+        ball_data: Ball-by-ball DataFrame
+        role: 'batter' or 'bowler'
         
     Returns:
-        DataFrame with original columns plus lagged features
+        DataFrame with advanced metrics per player-season
     """
+    print(f"Calculating advanced metrics for {role}s...")
+    
+    # Define ID and RAA column
+    id_col = 'batter_id' if role == 'batter' else 'bowler_id'
+    raa_col = 'batter_RAA' if role == 'batter' else 'bowler_RAA'
+    
+    # 1. Consistency Score (Std Dev of Match RAA)
+    # First, aggregate RAA by match
+    match_raa = ball_data.groupby(['season', id_col, 'match_id'])[raa_col].sum().reset_index()
+    
+    # Calculate Std Dev per season
+    consistency = match_raa.groupby(['season', id_col])[raa_col].std().reset_index()
+    consistency.rename(columns={raa_col: 'consistency_score'}, inplace=True)
+    
+    # 2. Home/Away Split
+    # Mark home matches
+    ball_data['is_home'] = ball_data.apply(lambda x: is_home_match(x, role), axis=1)
+    
+    # Aggregate RAA and Balls by Home/Away
+    ha_stats = ball_data.groupby(['season', id_col, 'is_home']).agg({
+        raa_col: 'sum',
+        'match_id': 'count' 
+    }).rename(columns={'match_id': 'balls', raa_col: 'RAA'}).reset_index()
+    
+    # Pivot to get Home and Away columns
+    ha_pivot = ha_stats.pivot_table(
+        index=['season', id_col], 
+        columns='is_home', 
+        values=['RAA', 'balls'], 
+        fill_value=0
+    ).reset_index()
+    
+    # Flatten columns
+    ha_pivot.columns = ['season', id_col, 'balls_away', 'balls_home', 'RAA_away', 'RAA_home']
+    
+    # Calculate RAA per ball
+    ha_pivot['RAA_per_ball_home'] = ha_pivot['RAA_home'] / ha_pivot['balls_home'].replace(0, np.nan)
+    ha_pivot['RAA_per_ball_away'] = ha_pivot['RAA_away'] / ha_pivot['balls_away'].replace(0, np.nan)
+    
+    # Calculate Diff (Home - Away)
+    # Fill NaN with 0 (if no home or no away games, diff is 0)
+    ha_pivot['home_advantage'] = (ha_pivot['RAA_per_ball_home'] - ha_pivot['RAA_per_ball_away']).fillna(0)
+    
+    # Merge Consistency and Home/Away
+    advanced_features = pd.merge(consistency, ha_pivot, on=['season', id_col], how='outer')
+    
+    return advanced_features
+
+def create_lagged_features(df, id_col, name_col, metric_cols, lags=[1, 2]):
+    """Create lagged features for time-series data."""
     df = df.copy()
     df = df.sort_values(['season', id_col])
-    
-    # Create a master list of all player-seasons we want to predict
-    # We want to predict for every player who played in a season, 
-    # PLUS potentially players who played in previous seasons (but that's for inference)
-    # For training, we only have labels (actual WAR) for players who actually played.
-    # So we stick to the rows present in df for the target.
-    
-    # However, to get lagged values, we need to look up past data.
-    # Self-join is the easiest way.
     
     feature_df = df.copy()
     
     for lag in lags:
-        # Create a temporary dataframe for the lagged year
         lag_df = df[['season', id_col] + metric_cols].copy()
-        lag_df['season'] = lag_df['season'] + lag  # Shift season forward to match target
+        lag_df['season'] = lag_df['season'] + lag
         
-        # Rename columns
         rename_dict = {col: f'{col}_lag{lag}' for col in metric_cols}
         lag_df = lag_df.rename(columns=rename_dict)
         
-        # Merge back to original
-        feature_df = pd.merge(
-            feature_df, 
-            lag_df, 
-            on=['season', id_col], 
-            how='left'
-        )
+        feature_df = pd.merge(feature_df, lag_df, on=['season', id_col], how='left')
         
     return feature_df
 
 def add_metadata_features(df, metadata, id_col):
     """Add age and other metadata features."""
-    # Merge metadata
     cols_to_use = ['player_id']
     if 'dob' in metadata.columns:
         cols_to_use.append('dob')
@@ -93,15 +163,12 @@ def add_metadata_features(df, metadata, id_col):
     df = pd.merge(df, metadata[cols_to_use], 
                   left_on=id_col, right_on='player_id', how='left')
     
-    # Calculate Age
     if 'dob' in df.columns:
         df['age'] = df.apply(lambda x: calculate_age(x['dob'], x['season']), axis=1)
     else:
         df['age'] = np.nan
     
-    # Fill missing age with mean (or median)
     if df['age'].isnull().any():
-        # If all are NaN (e.g. dob missing), fill with default age (e.g. 27)
         if df['age'].isnull().all():
             df['age'] = 27
         else:
@@ -111,12 +178,19 @@ def add_metadata_features(df, metadata, id_col):
 
 def main():
     print("Loading data...")
-    batter_war, bowler_war, metadata = load_data()
+    batter_war, bowler_war, ball_data, metadata = load_data()
     
     # --- Process Batters ---
     print("Processing Batters...")
-    # Metrics to lag
-    bat_metrics = ['WAR', 'RAA', 'balls_faced', 'WAR_per_ball']
+    
+    # Calculate Advanced Metrics
+    bat_advanced = calculate_advanced_metrics(ball_data, 'batter')
+    
+    # Merge Advanced Metrics into WAR data
+    batter_war = pd.merge(batter_war, bat_advanced, on=['season', 'batter_id'], how='left')
+    
+    # Metrics to lag (Added new metrics)
+    bat_metrics = ['WAR', 'RAA', 'balls_faced', 'WAR_per_ball', 'consistency_score', 'home_advantage']
     
     bat_features = create_lagged_features(
         batter_war, 
@@ -127,13 +201,8 @@ def main():
     )
     
     bat_features = add_metadata_features(bat_features, metadata, 'batter_id')
-    
-    # Add cumulative experience (balls faced prior to this season)
-    # This is a bit trickier with just lags. 
-    # Let's simple sum of lag1 and lag2 balls for now as a proxy for "recent experience"
     bat_features['recent_balls'] = bat_features['balls_faced_lag1'].fillna(0) + bat_features['balls_faced_lag2'].fillna(0)
     
-    # Save
     output_dir = Path(__file__).parent.parent / 'data' / 'ml_features'
     output_dir.mkdir(exist_ok=True)
     
@@ -142,7 +211,14 @@ def main():
     
     # --- Process Bowlers ---
     print("Processing Bowlers...")
-    bowl_metrics = ['WAR', 'RAA', 'balls_bowled', 'WAR_per_ball']
+    
+    # Calculate Advanced Metrics
+    bowl_advanced = calculate_advanced_metrics(ball_data, 'bowler')
+    
+    # Merge Advanced Metrics into WAR data
+    bowler_war = pd.merge(bowler_war, bowl_advanced, on=['season', 'bowler_id'], how='left')
+    
+    bowl_metrics = ['WAR', 'RAA', 'balls_bowled', 'WAR_per_ball', 'consistency_score', 'home_advantage']
     
     bowl_features = create_lagged_features(
         bowler_war, 

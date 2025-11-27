@@ -88,12 +88,16 @@ def main():
     
     bat_features = common_features + [
         'WAR_lag1', 'RAA_lag1', 'balls_faced_lag1', 'WAR_per_ball_lag1',
-        'WAR_lag2', 'RAA_lag2', 'balls_faced_lag2', 'WAR_per_ball_lag2'
+        'consistency_score_lag1', 'home_advantage_lag1',
+        'WAR_lag2', 'RAA_lag2', 'balls_faced_lag2', 'WAR_per_ball_lag2',
+        'consistency_score_lag2', 'home_advantage_lag2'
     ]
     
     bowl_features = common_features + [
         'WAR_lag1', 'RAA_lag1', 'balls_bowled_lag1', 'WAR_per_ball_lag1',
-        'WAR_lag2', 'RAA_lag2', 'balls_bowled_lag2', 'WAR_per_ball_lag2'
+        'consistency_score_lag1', 'home_advantage_lag1',
+        'WAR_lag2', 'RAA_lag2', 'balls_bowled_lag2', 'WAR_per_ball_lag2',
+        'consistency_score_lag2', 'home_advantage_lag2'
     ]
     
     # Output directory
