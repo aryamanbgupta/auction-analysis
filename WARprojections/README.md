@@ -96,3 +96,32 @@ The global model maintains high accuracy for batters (R² 0.36) but introduces s
 
 ### Outputs
 *   **Global Projections**: `results/WARprojections/batter_projections_2026_global.csv` & `bowler_projections_2026_global.csv`
+
+## Phase 6: Comprehensive Model Comparison
+
+We conducted a rigorous comparison of three approaches:
+1.  **Marcel Baseline**: Weighted average of past 3 years + regression to mean + aging curve.
+2.  **IPL-Only ML**: XGBoost trained on full IPL history (2008-2024).
+3.  **Global ML**: XGBoost trained on IPL history + Global T20 form.
+
+### Key Findings (2025 Backtest)
+*   **Batting**: Machine Learning approaches (**R² 0.36**) significantly outperform the Marcel baseline (**R² 0.28**). The Global model performs on par with the IPL-only model.
+*   **Bowling**: The **IPL-Only ML model** is the most accurate (**R² 0.19**), followed by Marcel (**R² 0.17**). Global data appears to introduce noise for established IPL bowlers.
+
+### File Reference
+All results are stored in `results/WARprojections/`.
+
+| Model | Season | Role | File Path |
+| :--- | :--- | :--- | :--- |
+| **Marcel** | 2025 (Backtest) | Batter | `marcel/batter_projections_2025.csv` |
+| **Marcel** | 2025 (Backtest) | Bowler | `marcel/bowler_projections_2025.csv` |
+| **Marcel** | 2026 (Forecast) | Batter | `marcel/batter_projections_2026.csv` |
+| **Marcel** | 2026 (Forecast) | Bowler | `marcel/bowler_projections_2026.csv` |
+| **IPL ML** | 2025 (Backtest) | Batter | `batter_backtest_2025.csv` |
+| **IPL ML** | 2025 (Backtest) | Bowler | `bowler_backtest_2025.csv` |
+| **IPL ML** | 2026 (Forecast) | Batter | `batter_projections_2026.csv` |
+| **IPL ML** | 2026 (Forecast) | Bowler | `bowler_projections_2026.csv` |
+| **Global ML** | 2025 (Backtest) | Batter | `batter_backtest_2025_global.csv` |
+| **Global ML** | 2025 (Backtest) | Bowler | `bowler_backtest_2025_global.csv` |
+| **Global ML** | 2026 (Forecast) | Batter | `batter_projections_2026_global.csv` |
+| **Global ML** | 2026 (Forecast) | Bowler | `bowler_projections_2026_global.csv` |
