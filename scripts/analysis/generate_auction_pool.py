@@ -212,6 +212,7 @@ def main():
         
         if match:
             retained_in_dataset.add(match)
+            print(f"Matched '{r_name}' -> '{match}' (Score: {score:.2f})")
             if r_name in debug_targets or match in debug_targets:
                 print(f"  MATCH: '{r_name}' -> '{match}' (Score: {score:.2f})")
         else:
