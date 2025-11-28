@@ -159,6 +159,41 @@ def phase2_solution(ipl_df, pool_batters, pool_bowlers, all_batters, all_bowlers
     top_auction = qualified_openers[qualified_openers['Status'] == 'Auction'].sort_values('SR_powerplay', ascending=False).head(10)
     top_auction[['SR_powerplay', 'RAA_powerplay', 'Balls_powerplay', 'WAR']].to_csv(output_dir / 'target_openers.csv')
 
+    # --- Module 9: All Opener Targets (NEW) ---
+    print("  Module 9: All Opener Targets")
+    # Filter: Min 60 balls in PP (All Nationalities)
+    qualified_all_openers = all_batters[all_batters['Balls_powerplay'] >= 60].copy()
+    
+    fig = px.scatter(qualified_all_openers, x='RAA_powerplay', y='SR_powerplay', 
+                     size='Balls_powerplay', hover_name=qualified_all_openers.index,
+                     color='Status',
+                     title='All Opener Targets (Indian & Overseas)',
+                     labels={'RAA_powerplay': 'Powerplay RAA', 'SR_powerplay': 'Powerplay Strike Rate'},
+                     color_discrete_map={'Auction': 'blue', 'Retained': 'red'},
+                     hover_data=['Status', 'Country', 'WAR'])
+    save_plot(fig, output_dir, 'solution_openers_all')
+    
+    top_all_auction = qualified_all_openers[qualified_all_openers['Status'] == 'Auction'].sort_values('SR_powerplay', ascending=False).head(10)
+    top_all_auction[['SR_powerplay', 'RAA_powerplay', 'Balls_powerplay', 'WAR']].to_csv(output_dir / 'target_openers_all.csv')
+
+    # --- Module 8: Middle Order Targets (NEW) ---
+    print("  Module 8: Middle Order Targets")
+    # Filter: Min 60 balls in Middle Overs (7-15)
+    # Note: all_batters has 'Balls_middle', 'Runs_middle', 'RAA_middle'
+    qualified_middle = all_batters[all_batters['Balls_middle'] >= 60].copy()
+    
+    fig = px.scatter(qualified_middle, x='RAA_middle', y='SR_middle', 
+                     size='Balls_middle', hover_name=qualified_middle.index,
+                     color='Status',
+                     title='Middle Order Targets (Auction vs Retained)',
+                     labels={'RAA_middle': 'Middle Overs RAA', 'SR_middle': 'Middle Overs Strike Rate'},
+                     color_discrete_map={'Auction': 'blue', 'Retained': 'red'},
+                     hover_data=['Status', 'WAR'])
+    save_plot(fig, output_dir, 'solution_middle_order')
+    
+    top_middle = qualified_middle[qualified_middle['Status'] == 'Auction'].sort_values('RAA_middle', ascending=False).head(10)
+    top_middle[['SR_middle', 'RAA_middle', 'Balls_middle', 'WAR']].to_csv(output_dir / 'target_middle_order.csv')
+
     # --- Prepare Bowlers (All + Status) ---
     all_bowlers['name_norm'] = all_bowlers.index.map(norm)
     pool_bowlers_norm = set(pool_bowlers.index.map(norm))

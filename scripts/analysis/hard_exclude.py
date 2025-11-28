@@ -15,9 +15,8 @@ def main():
         "KK Ahmed",       # Khaleel Ahmed (Retained by DC)
         "Arshad Khan",    # Mohd. Arshad Khan (Retained by MI)
         "Yudhvir Singh",  # Yudhvir Charak (Retained by LSG?)
-        "Vijaykumar Vyshak" # Vyshak Vijaykumar (Retained by RCB) - Wait, let's check if he is retained.
-        # Unmatched list had "Vyshak Vijaykumar". Dataset has "Vijaykumar Vyshak".
-        # Check if he is retained. `unmatched_retentions.txt` says yes.
+        "Vijaykumar Vyshak", # Vyshak Vijaykumar (Retained by RCB)
+        "PVD Chameera"    # Dushmantha Chameera (Retained?)
     ]
     
     # Add Vijaykumar Vyshak if he is in the pool

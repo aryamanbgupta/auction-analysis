@@ -46,6 +46,27 @@ We failed to take wickets with the new ball, putting pressure on the middle over
 3.  **Jonny Bairstow**: Proven performer (SR 160.4).
 4.  **Josh Inglis**: Solid option (SR 162.0).
 
+### Module 9: All Opener Targets (Indian & Overseas)
+**Objective**: Comprehensive view of all available openers (Indian & Overseas) for Powerplay dominance.
+**Criteria**: High Powerplay RAA and Strike Rate.
+
+![All Opener Targets](../../results/analysis/strategic/solution_openers_all.png)
+*   [Interactive Graph](../../results/analysis/strategic/solution_openers_all.html)
+
+### Module 8: The "Middle Order" Targets
+**Objective**: Find batters who dominate the middle overs (7-15) to fix our slump.
+**Criteria**: High Middle Overs RAA and Strike Rate.
+
+![Middle Order Targets](../../results/analysis/strategic/solution_middle_order.png)
+*   [Interactive Graph](../../results/analysis/strategic/solution_middle_order.html)
+
+**Top Auction Targets:**
+1.  **Heinrich Klaasen**: Elite spin basher (if available).
+2.  **Suryakumar Yadav**: (Unlikely, but top tier).
+3.  **Glenn Maxwell**: Also strong in middle overs.
+4.  **Nitish Rana**: Proven Indian middle order bat.
+5.  **Nehal Wadhera**: High potential.
+
 ### Module 5: The "Death Bowler" Hunt
 **Objective**: Find a partner for Natarajan who excels in overs 16-20.
 **Criteria**: High Death RAA, Low Economy.
