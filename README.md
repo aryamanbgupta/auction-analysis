@@ -242,6 +242,14 @@ Implementation validated against Rafique (2023) paper for IPL 2019:
 
 See [METHODOLOGY.md](./METHODOLOGY.md) for detailed validation analysis.
 
+## Strategic Analysis (DC 2026 Auction)
+A specialized module for data-driven auction planning, focusing on Delhi Capitals' 2026:
+- **[Strategic Analysis (Auction Planning)](README_STRATEGIC_ANALYSIS.md)**: Detailed breakdown of team needs and target identification.
+  - [Interactive Strategy Blog](results/analysis/strategic/dc_strategy_blog.html)
+- **[Moneyball Analysis (Value Draft)](results/analysis/moneyball/moneyball_report.html)**: VOMAM-based price predictions and value identification.
+  - [Target List (CSV)](results/analysis/moneyball/moneyball_targets.csv)
+
+
 ## Key Insights
 
 ### Bowling Dominance
