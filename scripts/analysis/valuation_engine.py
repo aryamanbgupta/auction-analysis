@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 from sklearn.linear_model import LinearRegression
+from scipy.optimize import curve_fit
 import difflib
 
 def normalize_name(name):
@@ -11,10 +12,10 @@ def normalize_name(name):
 class ValuationEngine:
     def __init__(self, project_root):
         self.project_root = Path(project_root)
-        self.models = {}
         self.projections = {}
         self.metadata = None
-        self.price_model = None
+        self.vomam_model = None
+        self.vope_params = None
         self.role_columns = []
         
     def load_data(self):
@@ -24,7 +25,29 @@ class ValuationEngine:
         self.metadata = pd.read_csv(self.project_root / 'data' / 'player_metadata.csv')
         self.metadata['name_norm'] = self.metadata['player_name'].apply(normalize_name)
         
-        # 2. Load Projections (2026)
+        # 2. Load Historical Data (for Normalization)
+        # We need to know the typical scale of WAR.
+        # Let's load the 2022-2025 stats used in strategic analysis.
+        try:
+            hist_bat = pd.read_csv(self.project_root / 'results' / 'analysis' / 'auction_stats' / 'batters_2022_2025.csv')
+            hist_bowl = pd.read_csv(self.project_root / 'results' / 'analysis' / 'auction_stats' / 'bowlers_2022_2025.csv')
+            
+            # These files have 'WAR' which is likely total over 4 years.
+            # We need Per Season WAR to compare with 2026 Projections.
+            # Approx: Total WAR / 4 (or number of seasons played).
+            # Let's just take the 99th percentile of the Total WAR and divide by ~3 (avg seasons played) as a rough baseline?
+            # Better: Load the raw WAR vs Price file which has 'total_WAR' (Per Season likely, or Total 2025).
+            
+            price_data = pd.read_csv(self.project_root / 'results' / '11_war_vs_price' / 'war_vs_price_full.csv')
+            # This file was used for training. 'total_WAR' here is the target scale we want.
+            target_99th = price_data['total_WAR'].quantile(0.99)
+            print(f"Target Scale (Historical 99th %ile): {target_99th:.2f}")
+            
+        except Exception as e:
+            print(f"Warning: Could not load historical data for normalization: {e}")
+            target_99th = 2.0 # Fallback
+            
+        # 3. Load Projections (2026)
         proj_dir = self.project_root / 'results' / 'WARprojections'
         
         # Load all 3 models for Batters and Bowlers
@@ -65,14 +88,31 @@ class ValuationEngine:
             dfs.append(merged)
             
         self.projections = pd.concat(dfs, ignore_index=True)
+        
+        # Sum duplicates (Player can be both batter and bowler)
+        self.projections = self.projections.groupby('player_name').sum().reset_index()
+        
         # Average Projection
-        self.projections['war_2026'] = self.projections[['marcel', 'ipl_ml', 'global_ml']].mean(axis=1)
+        self.projections['war_2026_raw'] = self.projections[['marcel', 'ipl_ml', 'global_ml']].mean(axis=1)
+        
+        # --- Normalization ---
+        proj_99th = self.projections['war_2026_raw'].quantile(0.99)
+        print(f"Projected Scale (Raw 99th %ile): {proj_99th:.2f}")
+        
+        if proj_99th > 0:
+            scaling_factor = target_99th / proj_99th
+        else:
+            scaling_factor = 1.0
+            
+        print(f"Applying Scaling Factor: {scaling_factor:.3f}")
+        self.projections['war_2026'] = self.projections['war_2026_raw'] * scaling_factor
+        
         self.projections['name_norm'] = self.projections['player_name'].apply(normalize_name)
         
         print(f"Loaded projections for {len(self.projections)} players.")
         
-    def train_price_model(self):
-        print("Training Price Model (VOMAM-style)...")
+    def train_models(self):
+        print("Training Price Models...")
         # Load 2025 Price vs WAR data
         price_data = pd.read_csv(self.project_root / 'results' / '11_war_vs_price' / 'war_vs_price_full.csv')
         
@@ -83,7 +123,8 @@ class ValuationEngine:
         price_data['is_overseas'] = price_data['country'].apply(lambda x: 0 if str(x).lower() in ['india', 'ind'] else 1)
         price_data['role_category'] = price_data['role_category'].fillna('Unknown')
         
-        # Features
+        # --- 1. VOMAM (Linear Model) ---
+        print("  Training VOMAM (Linear)...")
         df_encoded = pd.get_dummies(price_data, columns=['role_category'], prefix='role', drop_first=False)
         self.role_columns = [c for c in df_encoded.columns if c.startswith('role_')]
         
@@ -93,23 +134,57 @@ class ValuationEngine:
         X = df_encoded[features].fillna(0)
         y = df_encoded[target].fillna(0)
         
-        self.price_model = LinearRegression()
-        self.price_model.fit(X, y)
-        print(f"Price Model Trained. R2: {self.price_model.score(X, y):.3f}")
+        self.vomam_model = LinearRegression()
+        self.vomam_model.fit(X, y)
+        print(f"  VOMAM R2: {self.vomam_model.score(X, y):.3f}")
+        
+        # --- 2. VOPE (Power Law Model) ---
+        print("  Training VOPE (Power Law)...")
+        # Filter for positive WAR and Price to avoid log issues or bad fits
+        vope_data = price_data[(price_data['total_WAR'] > 0) & (price_data['price_cr'] > 0)].copy()
+        
+        def power_law(x, a, b):
+            return a * np.power(x, b)
+        
+        try:
+            popt, _ = curve_fit(power_law, vope_data['total_WAR'], vope_data['price_cr'], p0=[1, 1], maxfev=5000)
+            self.vope_params = popt
+            print(f"  VOPE Params: a={popt[0]:.3f}, b={popt[1]:.3f}")
+            
+            # Calculate R2 for VOPE
+            y_pred = power_law(vope_data['total_WAR'], *popt)
+            ss_res = np.sum((vope_data['price_cr'] - y_pred) ** 2)
+            ss_tot = np.sum((vope_data['price_cr'] - np.mean(vope_data['price_cr'])) ** 2)
+            r2 = 1 - (ss_res / ss_tot)
+            print(f"  VOPE R2: {r2:.3f}")
+            
+        except Exception as e:
+            print(f"  Error training VOPE: {e}")
+            self.vope_params = None
         
     def predict_price(self, war, is_overseas, role):
-        # Create input df
+        # --- VOMAM Prediction ---
         input_data = pd.DataFrame({'total_WAR': [war], 'is_overseas': [int(is_overseas)]})
         for col in self.role_columns:
             role_name = col.replace('role_', '')
             input_data[col] = 1 if role == role_name else 0
-        
-        # Ensure all columns match training
-        # (LinearRegression in sklearn depends on column order if numpy array, but we pass DF? No, sklearn converts to array)
-        # We must ensure column order matches X.columns from training
-        # Re-construct feature list
+            
         features = ['total_WAR', 'is_overseas'] + self.role_columns
-        return self.price_model.predict(input_data[features])[0]
+        vomam_price = self.vomam_model.predict(input_data[features])[0]
+        vomam_price = max(0.2, vomam_price)
+        
+        # --- VOPE Prediction ---
+        vope_price = 0.2
+        if self.vope_params is not None:
+            if war > 0:
+                vope_price = self.vope_params[0] * (war ** self.vope_params[1])
+            else:
+                vope_price = 0.2 # Base price for 0 or negative WAR
+        
+        # Ensure min price
+        vope_price = max(0.2, vope_price)
+        
+        return round(vomam_price, 2), round(vope_price, 2)
 
     def process_targets(self):
         target_dir = self.project_root / 'results' / 'analysis' / 'strategic'
@@ -122,12 +197,13 @@ class ValuationEngine:
             print(f"\nProcessing {file.name}...")
             df = pd.read_csv(file)
             
-            # Identify Name column (usually index or first column if saved without index=False? 
-            # strategic_analysis.py saves with index=True (default) so Player Name is index or first col)
-            # Let's check the CSV structure. usually: Player,SR,RAA...
             if 'Player' not in df.columns:
-                # Assume first column is player name
-                df = df.rename(columns={df.columns[0]: 'Player'})
+                # Assume first column is player name if not explicitly named
+                # But check if 'Unnamed: 0' exists which might be the index
+                if 'Unnamed: 0' in df.columns:
+                     df = df.rename(columns={'Unnamed: 0': 'Player'})
+                else:
+                     df = df.rename(columns={df.columns[0]: 'Player'})
             
             results = []
             for _, row in df.iterrows():
@@ -137,10 +213,8 @@ class ValuationEngine:
                 # 1. Get Projection
                 proj_row = self.projections[self.projections['name_norm'] == name_norm]
                 if proj_row.empty:
-                    # Fuzzy match?
-                    # For now, skip or use 0
                     war_proj = 0.0
-                    print(f"  Warning: No projection for {name}")
+                    # print(f"  Warning: No projection for {name}")
                 else:
                     war_proj = proj_row['war_2026'].values[0]
                 
@@ -156,18 +230,25 @@ class ValuationEngine:
                 is_overseas = 0 if str(country).lower() in ['india', 'ind'] else 1
                 
                 # 3. Predict Price
-                # If WAR is NaN (e.g. new player), use 0 or skip
                 if pd.isna(war_proj): war_proj = 0.0
                 
-                price_pred = self.predict_price(war_proj, is_overseas, role)
-                price_pred = max(0.2, price_pred) # Minimum base price approx
+                # Scale WAR? 
+                # The model was trained on 2025 WAR (Total Season). 
+                # The projections are also Total Season (2026).
+                # So no scaling needed if they are on the same scale.
+                # NOTE: Check if 2025 WAR in training data is comparable to Projections.
+                # Assuming yes for now.
+                
+                vomam, vope = self.predict_price(war_proj, is_overseas, role)
                 
                 # Collect Result
                 res = row.to_dict()
                 res['Role'] = role
                 res['Country'] = country
                 res['WAR_2026_Proj'] = round(war_proj, 2)
-                res['Est_Price_Cr'] = round(price_pred, 2)
+                res['Est_Price_VOMAM'] = vomam
+                res['Est_Price_VOPE'] = vope
+                res['Est_Price_Avg'] = round((vomam + vope) / 2, 2)
                 results.append(res)
             
             # Save Valued CSV
@@ -176,20 +257,22 @@ class ValuationEngine:
                 continue
                 
             res_df = pd.DataFrame(results)
+            
             # Reorder columns
-            cols = ['Player', 'Role', 'Country', 'WAR_2026_Proj', 'Est_Price_Cr'] + [c for c in res_df.columns if c not in ['Player', 'Role', 'Country', 'WAR_2026_Proj', 'Est_Price_Cr']]
+            first_cols = ['Player', 'Role', 'Country', 'WAR_2026_Proj', 'Est_Price_VOMAM', 'Est_Price_VOPE', 'Est_Price_Avg']
+            cols = first_cols + [c for c in res_df.columns if c not in first_cols]
             res_df = res_df[cols]
             
             out_file = output_dir / f"valued_{file.name}"
             res_df.to_csv(out_file, index=False)
             print(f"  Saved to {out_file}")
-            print(res_df[['Player', 'WAR_2026_Proj', 'Est_Price_Cr']].head().to_string(index=False))
+            print(res_df[['Player', 'WAR_2026_Proj', 'Est_Price_VOMAM', 'Est_Price_VOPE']].head().to_string(index=False))
 
 def main():
     root = Path(__file__).parent.parent.parent
     engine = ValuationEngine(root)
     engine.load_data()
-    engine.train_price_model()
+    engine.train_models()
     engine.process_targets()
 
 if __name__ == "__main__":
