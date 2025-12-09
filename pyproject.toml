@@ -36,6 +36,7 @@ dependencies = [
     "curl-cffi>=0.13.0",
     "dotenv>=0.9.9",
     "ddgs>=9.9.3",
+    "python-espncricinfo>=0.5.8",
 ]
 
 [project.optional-dependencies]
