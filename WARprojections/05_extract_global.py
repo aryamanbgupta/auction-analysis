@@ -50,12 +50,7 @@ def get_match_players(match_data: Dict[str, Any], registry: Dict[str, str]) -> S
     return {p for p in players if p} # Remove None
 
 def extract_global_ball_data(match_data: Dict[str, Any], league_name: str) -> List[Dict[str, Any]]:
-    """Extract ball-by-ball data with league tag."""
-    # Reuse the logic from 01_extract_full_history but add league_name
-    # We can copy-paste the logic or import if we refactored. 
-    # Since 01 script is standalone, I will duplicate the core extraction logic here for safety 
-    # and to add the league_name column.
-    
+    """Extract ball-by-ball data with league tag and team information."""
     info = match_data.get('info', {})
     innings_list = match_data.get('innings', [])
     registry = info.get('registry', {})
@@ -65,6 +60,11 @@ def extract_global_ball_data(match_data: Dict[str, Any], league_name: str) -> Li
     match_date = info.get('dates', [''])[0]
     season = info.get('season', '')
     match_type = info.get('match_type', '')
+    
+    # Extract teams for T20I stratification
+    teams = info.get('teams', [])
+    team1 = teams[0] if len(teams) > 0 else ''
+    team2 = teams[1] if len(teams) > 1 else ''
     
     # Standardize season (handle "2023/24")
     season = str(season).split('/')[0]
@@ -103,6 +103,8 @@ def extract_global_ball_data(match_data: Dict[str, Any], league_name: str) -> Li
                     'season': season,
                     'match_date': match_date,
                     'venue': venue,
+                    'team1': team1,
+                    'team2': team2,
                     'innings': innings_number,
                     'batting_team': batting_team,
                     'over': over_number,

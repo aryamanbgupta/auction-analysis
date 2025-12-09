@@ -85,31 +85,84 @@ uv run python WARprojections/04_train_model.py
 To further enhance projections, we integrated data from major T20 leagues (BBL, PSL, CPL, etc.) and T20Is.
 
 ### Methodology
-1.  **Extraction**: Extracted 1.2M+ balls from global T20s involving IPL players (`05_extract_global.py`).
-2.  **League Strength**: Calculated "Difficulty Factors" (MLE) for each league relative to the IPL (`06_league_strength.py`).
-    *   *Example Factors*: T20I (0.16), BBL (0.27), SMAT (0.01).
-3.  **Features**: Generated `global_raa_per_ball` (Adjusted RAA) and `global_balls` (Volume) for the year prior to each IPL season (`07_global_features.py`).
-4.  **Modeling**: Retrained XGBoost with these additional features (`08_train_global_model.py`).
+1.  **Extraction**: Extracted 1.28M+ balls from global T20s involving IPL players (`05_extract_global.py`).
+    - Now includes `team1`/`team2` columns for T20I stratification.
+2.  **League Strength** (`06_league_strength.py`): 
+    - **T20I Stratification**: Split T20Is into Elite/Mixed/Associate tiers based on opponent strength.
+    - **Separate Batter/Bowler Factors**: Each role gets its own difficulty factors.
+    - **Regression with Intercept**: `IPL_RAA = α + β × LeagueX_RAA`.
+    - **Weighted Regression**: Using WLS weighted by balls faced.
+    - **Conservative Prior**: Unknown/sparse leagues shrink toward 0.3 (not 1.0).
 
-### Results
-The global model maintains high accuracy for batters (R² 0.36) but introduces some noise for bowlers (R² 0.16 vs 0.19). This suggests that for established IPL bowlers, IPL history remains the gold standard, while global form is a secondary factor. However, this model is likely more robust for players with gaps in their IPL career.
+### League Difficulty Factors
 
-### Outputs
-*   **Global Projections**: `results/WARprojections/batter_projections_2026_global.csv` & `bowler_projections_2026_global.csv`
+| League | Batter Factor | Bowler Factor | Notes |
+|--------|---------------|---------------|-------|
+| **IPL** | 1.00 | 1.00 | Reference |
+| CPL | 0.34 | 0.46 | |
+| BBL | 0.32 | 0.38 | |
+| BPL | 0.32 | 0.39 | |
+| T20Blast | 0.27 | 0.45 | |
+| T20I_Elite | 0.19 | 0.30 | Both teams from Top 10 |
+| T20I_Mixed | 0.15 | 0.16 | One strong team |
+| SMAT | 0.14 | 0.18 | India domestic |
 
-## Phase 6: Comprehensive Model Comparison
+3.  **Features** (`07_global_features.py`): Uses role-specific factors when computing `global_raa_per_ball` and `global_balls`.
+4.  **Modeling** (`08_train_global_model.py`): 
+    - **Reduced feature set**: 6-7 features to prevent overfitting.
+    - **Bowling-specific config**: Higher `global_balls` threshold (100 vs 30), more regularization.
 
-We conducted a rigorous comparison of three approaches:
-1.  **Marcel Baseline**: Weighted average of past 3 years + regression to mean + aging curve.
-2.  **IPL-Only ML**: XGBoost trained on full IPL history (2008-2024).
-3.  **Global ML**: XGBoost trained on IPL history + Global T20 form.
+## Phase 6: Model Improvements (Dec 2024)
 
-### Key Findings (2025 Backtest)
-*   **Batting**: Machine Learning approaches (**R² 0.36**) significantly outperform the Marcel baseline (**R² 0.28**). The Global model performs on par with the IPL-only model.
-*   **Bowling**: The **IPL-Only ML model** is the most accurate (**R² 0.19**), followed by Marcel (**R² 0.17**). Global data appears to introduce noise for established IPL bowlers.
+### Overfitting Fix
+The original XGBoost models were severely overfitting (Train R² 0.73, Test R² 0.02). We fixed this by:
 
-### File Reference
-All results are stored in `results/WARprojections/`.
+1. **Reduced Features**: From 18 to 5-7 most predictive, least correlated features:
+   - `WAR_weighted` (Marcel-style weighted average)
+   - `consistency` (stability measure)
+   - `career_war` (cumulative experience)
+   - `years_played` (tenure)
+   - `balls_faced` / `balls_bowled` (volume)
+
+2. **Increased Regularization**:
+   - `reg_alpha=1.0` (L1)
+   - `reg_lambda=2.0` (L2)
+   - `max_depth=3` (shallower trees)
+
+### Current Performance (2025 Backtest)
+
+| Model | Batters R² | Bowlers R² |
+|-------|------------|------------|
+| **Marcel** | 0.16 | 0.23 |
+| **IPL ML** | 0.08 | **0.23** |
+| **Global ML** | 0.09 | 0.20 |
+
+### Recommendations
+- **Batters**: Use Marcel (simple and effective) or Global ML.
+- **Bowlers**: Use IPL ML or Marcel (both at R² 0.23).
+
+## Usage
+
+```bash
+# Full Pipeline (with global data)
+uv run python WARprojections/01_extract_full_history.py   # Extract IPL data
+uv run python WARprojections/02_calculate_metrics.py       # Calculate WAR
+uv run python WARprojections/03_feature_engineering.py     # Generate features
+uv run python WARprojections/05_extract_global.py          # Extract global T20 data
+uv run python WARprojections/06_league_strength.py         # Calculate league factors
+uv run python WARprojections/07_global_features.py         # Generate global features
+uv run python WARprojections/04_train_model.py             # Train IPL-only model
+uv run python WARprojections/08_train_global_model.py      # Train global model
+uv run python WARprojections/09_marcel_baseline.py         # Generate Marcel projections
+uv run python WARprojections/10_comprehensive_analysis.py  # Compare all models
+```
+
+## Outputs
+*   **Projections**: `results/WARprojections/batter_projections_2026.csv` & `bowler_projections_2026.csv`
+*   **Backtest Results**: `results/WARprojections/batter_backtest_2025.csv` & `bowler_backtest_2025.csv`
+*   **Model Comparison**: `results/WARprojections/model_comparison_report.md`
+
+## File Reference
 
 | Model | Season | Role | File Path |
 | :--- | :--- | :--- | :--- |
@@ -125,3 +178,4 @@ All results are stored in `results/WARprojections/`.
 | **Global ML** | 2025 (Backtest) | Bowler | `bowler_backtest_2025_global.csv` |
 | **Global ML** | 2026 (Forecast) | Batter | `batter_projections_2026_global.csv` |
 | **Global ML** | 2026 (Forecast) | Bowler | `bowler_projections_2026_global.csv` |
+
