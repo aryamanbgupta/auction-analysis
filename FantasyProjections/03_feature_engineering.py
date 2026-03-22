@@ -387,8 +387,22 @@ def main():
         print("7. No metadata with dob found, skipping age")
         features['age'] = np.nan
 
-    # 8. Target variable: avg fantasy pts NEXT season
-    print("8. Creating target variable (avg_fantasy_pts_next_season)...")
+    # 8. T20I inter-season features
+    data_dir = project_root / 'data'
+    t20i_path = data_dir / 't20i_fantasy_features.csv'
+    if t20i_path.exists():
+        print("8. Merging T20I inter-season features...")
+        t20i_feats = pd.read_csv(t20i_path)
+        features = features.merge(t20i_feats, on=['player_id', 'season'], how='left')
+        features['has_t20i_data'] = features['t20i_matches_interseason'].notna().astype(int)
+        n_with_t20i = features['has_t20i_data'].sum()
+        print(f"   → {n_with_t20i}/{len(features)} rows with T20I data ({100*n_with_t20i/len(features):.1f}%)")
+    else:
+        print("8. T20I features not found, skipping")
+        features['has_t20i_data'] = 0
+
+    # 9. Target variable: avg fantasy pts NEXT season
+    print("9. Creating target variable (avg_fantasy_pts_next_season)...")
     next_season = features[['player_id', 'season', 'avg_fantasy_pts']].copy()
     next_season['season'] = next_season['season'] - 1
     next_season = next_season.rename(columns={'avg_fantasy_pts': 'target_avg_fp_next'})
@@ -397,7 +411,7 @@ def main():
     n_with_target = features['target_avg_fp_next'].notna().sum()
     print(f"   {n_with_target} rows with target (of {len(features)})")
 
-    # 9. Summary
+    # 10. Summary
     print(f"\n{'='*60}")
     print(f"FEATURE ENGINEERING COMPLETE")
     print(f"{'='*60}")

@@ -35,9 +35,25 @@ All components successfully implemented and validated against original paper res
 cricWAR/
 ├── data/
 │   ├── ipl_matches.parquet          # All IPL ball-by-ball data
+│   ├── ipl_2026_squads_enriched.csv # 250 players, 10 teams
 │   └── player_metadata.csv          # From cricketdata package
 ├── data_refresh/
 │   └── refresh_cricsheet.py         # Automated Cricsheet data downloader
+├── FantasyProjections/              # Dream11 fantasy points model
+│   ├── 01_extract_with_fielders.py  # IPL ball-by-ball + fielders
+│   ├── 02_calculate_fantasy_points.py  # Dream11 scoring
+│   ├── 02b_extract_t20i_fantasy.py  # T20I extraction (experimental)
+│   ├── 02c_calculate_t20i_fantasy_points.py  # T20I scoring (experimental)
+│   ├── 03_feature_engineering.py    # ~95 ML features
+│   ├── 03b_t20i_features.py        # T20I features (experimental)
+│   ├── 04_train_model.py           # Backtest + A/B comparison
+│   ├── 05_train_production.py      # Production model
+│   ├── 06_score_auction.py         # Score auction pool
+│   ├── 07_score_squads.py          # Score 2026 squads (250 players)
+│   ├── 08_visualize_squads.py      # Interactive Plotly dashboard
+│   └── README.md                   # Full documentation
+├── WARprojections/                  # WAR projection model
+│   └── ...                          # See WARprojections/README.md
 ├── notebooks/
 │   ├── 01_war_results_visualization.ipynb     # All-time WAR analysis
 │   ├── 02_expected_runs_validation.ipynb      # Model validation
@@ -58,6 +74,9 @@ cricWAR/
 │   ├── validate_against_paper.py    # Validation script
 │   └── utils.py                     # Helper functions
 ├── results/
+│   ├── FantasyProjections/          # Fantasy point projections
+│   │   └── squad_2026/              # Squad projections + visualization
+│   ├── WARprojections/              # WAR projections
 │   ├── 03_expected_runs/           # θ(o,w) model artifacts
 │   ├── 04_run_values/              # Run values dataset
 │   ├── 05_leverage_index/          # Leverage index calculations
@@ -262,6 +281,23 @@ Implementation validated against Rafique (2023) paper for IPL 2019:
 
 See [METHODOLOGY.md](./METHODOLOGY.md) for detailed validation analysis.
 
+## Fantasy Points Projections (IPL 2026 Squads)
+
+Predicts **Dream11 fantasy points per match** for all 250 IPL 2026 squad players across 10 teams. See [`FantasyProjections/README.md`](FantasyProjections/README.md) for full documentation.
+
+- **Model**: XGBoost + RF + Marcel ensemble (R²=0.313 on 2025 backtest)
+- **Features**: ~95 per player-season (career lags, phase splits, form, opponent quality)
+- **Coverage**: 193/250 players matched (77.2%), 57 replacement-level (uncapped/new players)
+- **Output**: [Interactive Squad Dashboard](results/FantasyProjections/squad_2026/squad_fantasy_visualization.html)
+
+**T20I Integration Experiment**: Tested 16 inter-season T20I features (4,976 matches, 437 IPL players). Result: **no improvement** (ΔR²=-0.01). T20I form doesn't reliably predict IPL performance — different conditions, sparse coverage, and high variance.
+
+```bash
+# Quick start — score squads and visualize
+uv run python FantasyProjections/07_score_squads.py
+uv run python FantasyProjections/08_visualize_squads.py
+```
+
 ## Strategic Analysis (DC 2026 Auction)
 A specialized module for data-driven auction planning, focusing on Delhi Capitals' 2026:
 - **[Strategic Analysis (Auction Planning)](README_STRATEGIC_ANALYSIS.md)**: Detailed breakdown of team needs and target identification.
@@ -333,6 +369,6 @@ This is a reproduction for educational purposes. Please cite the original paper 
 
 ---
 
-**Last Updated**: November 2024
+**Last Updated**: March 2026
 **Status**: Production-ready with comprehensive validation
-**Coverage**: All IPL seasons (2007-2025)
+**Coverage**: All IPL seasons (2007-2025), Fantasy projections for all 250 IPL 2026 squad players

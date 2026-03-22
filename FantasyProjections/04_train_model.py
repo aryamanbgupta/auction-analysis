@@ -1,10 +1,10 @@
 """
-Train and compare Unified vs Role-Based models for fantasy point prediction.
+Train and compare models for fantasy point prediction.
 
-Approach A — Unified: Single model for all players (role as one-hot feature)
-Approach B — Role-based: Separate models for BAT, BOWL, AR, WK
+Comparison A: Unified (no T20I) vs Unified + T20I features
+Comparison B: Unified vs Role-Based (legacy)
 
-Both use XGBoost + RandomForest + Marcel ensemble.
+XGBoost + RandomForest + Marcel ensemble.
 Backtest: Train 2008-2023, predict 2025 season (using 2024 features).
 
 OUTPUT: results/FantasyProjections/backtest_2025.csv, model comparison report
@@ -65,6 +65,15 @@ OPPONENT_FEATURES = [
 ALL_FEATURES = (CORE_FEATURES + LAG_FEATURES + BATTING_FEATURES +
                 BOWLING_FEATURES + FIELDING_FEATURES + FORM_FEATURES +
                 OPPONENT_FEATURES)
+
+T20I_FEATURES = [
+    't20i_avg_fantasy_pts', 't20i_std_fantasy_pts', 't20i_max_fantasy_pts',
+    't20i_decay_form', 't20i_matches_interseason',
+    't20i_batting_avg_pts', 't20i_batting_sr', 't20i_boundary_rate',
+    't20i_bowling_avg_pts', 't20i_bowling_econ', 't20i_wicket_rate',
+    't20i_vs_ipl_ratio', 't20i_form_momentum', 't20i_recency_days',
+    't20i_elite_share', 'has_t20i_data',
+]
 
 
 # ── Training helpers ───────────────────────────────────────────────────────
@@ -162,10 +171,12 @@ def evaluate(y_true, y_pred, label=''):
 
 # ── Approach A: Unified model ──────────────────────────────────────────────
 
-def train_unified(df):
-    """Train a single model for all roles."""
+def train_unified(df, include_t20i=False, label=''):
+    """Train a single model for all roles, optionally with T20I features."""
+    suffix = ' + T20I' if include_t20i else ''
+    header = label or f'UNIFIED MODEL{suffix}'
     print("\n" + "=" * 60)
-    print("APPROACH A: UNIFIED MODEL (all roles)")
+    print(header)
     print("=" * 60)
 
     # One-hot encode role
@@ -174,6 +185,8 @@ def train_unified(df):
         df[f'role_{r}'] = (df['role'] == r).astype(int)
 
     features = ALL_FEATURES + ['role_BAT', 'role_BOWL', 'role_AR', 'role_WK']
+    if include_t20i:
+        features = features + T20I_FEATURES
     valid, avail = prepare_data(df, features)
 
     train_mask = valid['season'] <= 2023
@@ -273,39 +286,109 @@ def main():
     df = pd.read_csv(project_root / 'data' / 'fantasy_features.csv')
     print(f"Loaded {len(df)} player-seasons, {df['target_avg_fp_next'].notna().sum()} with target")
 
-    # Train both approaches
-    unified_metrics, unified_results, unified_valid, unified_test_mask = train_unified(df)
+    # ── Check if T20I features are available ─────────────────────────
+    has_t20i = 'has_t20i_data' in df.columns and df['has_t20i_data'].sum() > 0
+    if has_t20i:
+        n_t20i = df['has_t20i_data'].sum()
+        print(f"\nT20I features detected: {n_t20i}/{len(df)} rows ({100*n_t20i/len(df):.1f}%)")
+    else:
+        print("\nNo T20I features found — running baseline only")
+
+    # ── Train models ──────────────────────────────────────────────────
+    # A) Baseline: Unified without T20I
+    base_metrics, base_results, base_valid, base_test_mask = train_unified(
+        df, include_t20i=False, label='MODEL A: UNIFIED BASELINE (no T20I)')
+
+    # B) With T20I (if available)
+    t20i_metrics, t20i_results, t20i_valid, t20i_test_mask = None, None, None, None
+    if has_t20i:
+        t20i_metrics, t20i_results, t20i_valid, t20i_test_mask = train_unified(
+            df, include_t20i=True, label='MODEL B: UNIFIED + T20I FEATURES')
+
+    # C) Legacy role-based comparison
     role_metrics_overall, role_metrics_by_role, role_preds, role_actuals, role_names, role_roles = train_role_based(df)
 
     # ── Comparison ─────────────────────────────────────────────────────
     print("\n" + "=" * 60)
     print("MODEL COMPARISON")
     print("=" * 60)
-    print(f"\n{'Model':30s}  {'R²':>8s}  {'RMSE':>8s}  {'MAE':>8s}  {'Spearman':>10s}")
-    print("-" * 70)
-    u = unified_metrics['Ensemble']
-    print(f"{'Unified Ensemble':30s}  {u['r2']:8.3f}  {u['rmse']:8.2f}  {u['mae']:8.2f}  {u['spearman']:10.3f}")
+    print(f"\n{'Model':35s}  {'R²':>8s}  {'RMSE':>8s}  {'MAE':>8s}  {'Spearman':>10s}")
+    print("-" * 75)
+
+    u = base_metrics['Ensemble']
+    print(f"{'A) Unified (no T20I)':35s}  {u['r2']:8.3f}  {u['rmse']:8.2f}  {u['mae']:8.2f}  {u['spearman']:10.3f}")
+
+    if t20i_metrics:
+        t = t20i_metrics['Ensemble']
+        print(f"{'B) Unified + T20I':35s}  {t['r2']:8.3f}  {t['rmse']:8.2f}  {t['mae']:8.2f}  {t['spearman']:10.3f}")
+        delta_r2 = t['r2'] - u['r2']
+        delta_mae = u['mae'] - t['mae']  # positive = improvement
+        print(f"\n  T20I impact: ΔR²={delta_r2:+.3f}  ΔMAE={delta_mae:+.2f}")
+        if delta_r2 >= 0.02 or delta_mae >= 1.0:
+            print("  → T20I features IMPROVE the model — recommend incorporating")
+        elif delta_r2 > 0:
+            print("  → T20I features show slight improvement — marginal benefit")
+        else:
+            print("  → T20I features do NOT improve the model")
+
+        # Sub-analysis: capped players only (has_t20i_data == 1)
+        if t20i_valid is not None:
+            capped_mask = t20i_valid.loc[t20i_test_mask, 'has_t20i_data'] == 1
+            if capped_mask.sum() > 10:
+                y_capped = t20i_valid.loc[t20i_test_mask, 'target_avg_fp_next'].values[capped_mask]
+                pred_capped_t20i = t20i_results['ensemble'][capped_mask]
+                pred_capped_base = base_results['ensemble'][capped_mask]
+                print(f"\n  Capped players only (n={capped_mask.sum()}):")
+                evaluate(y_capped, pred_capped_base, "  A) Baseline (capped)")
+                evaluate(y_capped, pred_capped_t20i, "  B) + T20I (capped)")
+
     r = role_metrics_overall
-    print(f"{'Role-Based Combined':30s}  {r['r2']:8.3f}  {r['rmse']:8.2f}  {r['mae']:8.2f}  {r['spearman']:10.3f}")
+    print(f"{'C) Role-Based Combined':35s}  {r['r2']:8.3f}  {r['rmse']:8.2f}  {r['mae']:8.2f}  {r['spearman']:10.3f}")
+
+    # Feature importances for T20I model
+    if t20i_results:
+        print(f"\n{'='*60}")
+        print("FEATURE IMPORTANCES — Unified + T20I (XGBoost)")
+        print("=" * 60)
+        xgb_model = t20i_results['xgb_model']
+        imputer = t20i_results['imputer']
+        try:
+            feat_names = imputer.get_feature_names_out()
+        except AttributeError:
+            feat_names = list(range(len(xgb_model.feature_importances_)))
+        importances = pd.Series(xgb_model.feature_importances_, index=feat_names)
+        top_feats = importances.nlargest(20)
+        for feat, imp in top_feats.items():
+            marker = " ← T20I" if str(feat).startswith('t20i_') or feat == 'has_t20i_data' else ""
+            print(f"  {str(feat):40s}  {imp:.4f}{marker}")
+
+        t20i_feat_importance = importances[[f for f in importances.index if str(f).startswith('t20i_') or f == 'has_t20i_data']]
+        total_t20i_imp = t20i_feat_importance.sum()
+        print(f"\n  Total T20I feature importance: {total_t20i_imp:.4f} ({100*total_t20i_imp/importances.sum():.1f}%)")
 
     # Pick winner
-    if u['r2'] >= r['r2']:
-        winner = 'unified'
-        print(f"\n→ WINNER: Unified model (R² {u['r2']:.3f} >= {r['r2']:.3f})")
-    else:
+    best_r2 = u['r2']
+    winner = 'unified'
+    if t20i_metrics and t20i_metrics['Ensemble']['r2'] > best_r2:
+        best_r2 = t20i_metrics['Ensemble']['r2']
+        winner = 'unified_t20i'
+    if r['r2'] > best_r2:
         winner = 'role_based'
-        print(f"\n→ WINNER: Role-based model (R² {r['r2']:.3f} > {u['r2']:.3f})")
+    print(f"\n→ WINNER: {winner} (best R²={best_r2:.3f})")
 
     # ── Save backtest results ──────────────────────────────────────────
-    # Save unified backtest
-    test_data = unified_valid.loc[unified_test_mask].copy()
-    test_data['predicted_fp'] = unified_results['ensemble']
-    test_data['xgb_pred'] = unified_results['xgb']
-    test_data['rf_pred'] = unified_results['rf']
-    test_data['marcel_pred'] = unified_results['marcel']
+    test_data = base_valid.loc[base_test_mask].copy()
+    test_data['predicted_fp'] = base_results['ensemble']
+    test_data['xgb_pred'] = base_results['xgb']
+    test_data['rf_pred'] = base_results['rf']
+    test_data['marcel_pred'] = base_results['marcel']
+    if t20i_results:
+        test_data['predicted_fp_t20i'] = t20i_results['ensemble']
     backtest_cols = ['season', 'player_id', 'player_name', 'role',
                      'avg_fantasy_pts', 'target_avg_fp_next',
                      'predicted_fp', 'xgb_pred', 'rf_pred', 'marcel_pred']
+    if t20i_results:
+        backtest_cols.append('predicted_fp_t20i')
     test_data = test_data[[c for c in backtest_cols if c in test_data.columns]]
     save_dataframe(test_data, results_dir / 'backtest_2025_unified.csv', format='csv')
 
@@ -319,17 +402,27 @@ def main():
     save_dataframe(role_bt, results_dir / 'backtest_2025_role_based.csv', format='csv')
 
     # Save comparison report
-    report = {
-        'model': ['Unified Ensemble', 'Role-Based Combined'],
-        'r2': [u['r2'], r['r2']],
-        'rmse': [u['rmse'], r['rmse']],
-        'mae': [u['mae'], r['mae']],
-        'spearman': [u['spearman'], r['spearman']],
-        'winner': [winner == 'unified', winner == 'role_based'],
-    }
-    save_dataframe(pd.DataFrame(report), results_dir / 'model_comparison.csv', format='csv')
+    models = ['Unified (no T20I)', 'Role-Based Combined']
+    r2s = [u['r2'], r['r2']]
+    rmses = [u['rmse'], r['rmse']]
+    maes = [u['mae'], r['mae']]
+    spearmans = [u['spearman'], r['spearman']]
+    if t20i_metrics:
+        t = t20i_metrics['Ensemble']
+        models.append('Unified + T20I')
+        r2s.append(t['r2'])
+        rmses.append(t['rmse'])
+        maes.append(t['mae'])
+        spearmans.append(t['spearman'])
+    report = pd.DataFrame({
+        'model': models,
+        'r2': r2s,
+        'rmse': rmses,
+        'mae': maes,
+        'spearman': spearmans,
+    })
+    save_dataframe(report, results_dir / 'model_comparison.csv', format='csv')
 
-    # Save winner info for production script
     with open(results_dir / 'winner.txt', 'w') as f:
         f.write(winner)
 
