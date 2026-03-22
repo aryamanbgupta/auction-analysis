@@ -114,68 +114,387 @@ To further enhance projections, we integrated data from major T20 leagues (BBL, 
 
 ## Phase 6: Model Improvements (Dec 2024)
 
-### Overfitting Fix
+### V2: Overfitting Fix
 The original XGBoost models were severely overfitting (Train R² 0.73, Test R² 0.02). We fixed this by:
 
-1. **Reduced Features**: From 18 to 5-7 most predictive, least correlated features:
-   - `WAR_weighted` (Marcel-style weighted average)
-   - `consistency` (stability measure)
-   - `career_war` (cumulative experience)
-   - `years_played` (tenure)
-   - `balls_faced` / `balls_bowled` (volume)
+1. **Reduced Features**: From 18 to 5-7 most predictive, least correlated features
+2. **Increased Regularization**: `reg_alpha=1.0`, `reg_lambda=2.0`, `max_depth=3`
 
-2. **Increased Regularization**:
-   - `reg_alpha=1.0` (L1)
-   - `reg_lambda=2.0` (L2)
-   - `max_depth=3` (shallower trees)
+---
 
-### Current Performance (2025 Backtest)
+## Phase 7: Advanced Model Development (Dec 2024)
 
-| Model | Batters R² | Bowlers R² |
-|-------|------------|------------|
-| **Marcel** | 0.16 | 0.23 |
-| **IPL ML** | 0.08 | **0.23** |
-| **Global ML** | 0.09 | 0.20 |
+We conducted extensive experimentation to improve model accuracy beyond the baseline fixes.
 
-### Recommendations
-- **Batters**: Use Marcel (simple and effective) or Global ML.
-- **Bowlers**: Use IPL ML or Marcel (both at R² 0.23).
+### Model Evolution
+
+| Version | Batters R² | Bowlers R² | Key Changes |
+|---------|------------|------------|-------------|
+| **V2** | 0.08 | 0.23 | Overfitting fix, reduced features |
+| **V3** | 0.16 | 0.27 | Phase RAA + Regression-to-mean target |
+| **V4** | 0.17 | 0.29 | Situational features (chasing/setting) |
+| **V5** | 0.24 | 0.32 | XGB + Marcel ensemble |
+| **V6** | **0.25** | **0.35** | Optimized + Multi-model (XGB+RF+Marcel) |
+
+### V3 Improvements (`04_train_model_v3.py`)
+
+**New Features** (`03b_phase_features.py`):
+- `phase_raa_per_ball_powerplay` - Performance in overs 0-5
+- `phase_raa_per_ball_middle` - Performance in overs 6-15
+- `phase_raa_per_ball_death` - Performance in overs 16-20
+- `last_5_matches_raa` - Recent form from last 5 IPL matches
+
+**Key Innovation**: Predict deviation from regression instead of raw WAR:
+```python
+expected_war = α + β × WAR_weighted  # Simple regression line
+target = actual_war - expected_war    # Predict the residual
+```
+
+### V4 Improvements (`04_train_model_v4.py`)
+
+**New Features** (`03c_situational_features.py`):
+- `sit_raa_per_ball_chasing` - Performance when chasing
+- `sit_raa_per_ball_setting` - Performance when setting
+- `bat_position` - Average batting position (opener=1-2, middle=3-5, finisher=6+)
+- `win_rate` - Team strength proxy (team's win percentage)
+
+### V5 Improvements (`04_train_model_v5.py`)
+
+**Ensemble Approach**: Combine XGBoost with Marcel using learned weights
+- Uses Ridge regression to find optimal weighting
+- **Learned Weights**:
+  - Batters: 80% XGB + 20% Marcel
+  - Bowlers: 49% XGB + 51% Marcel
+
+### V6 Improvements (`04_train_model_v6.py`) - BEST MODEL
+
+**Role-Specific Optimization**:
+- **Batters**: `max_depth=5` (deeper trees help)
+- **Bowlers**: `max_depth=2`, `n_estimators=50` (shallower, more regularized)
+
+**Multi-Model Ensemble**: XGBoost + RandomForest + Marcel
+- **Learned Weights (Batters)**: XGB 1.18, RF -0.43, Marcel 0.25
+- **Learned Weights (Bowlers)**: XGB -0.69, RF 1.16, Marcel 0.53
+
+**Key Insight**: For bowlers, RandomForest + Marcel outperforms XGBoost significantly.
+
+---
 
 ## Usage
 
 ```bash
-# Full Pipeline (with global data)
+# Full Pipeline (recommended)
 uv run python WARprojections/01_extract_full_history.py   # Extract IPL data
 uv run python WARprojections/02_calculate_metrics.py       # Calculate WAR
-uv run python WARprojections/03_feature_engineering.py     # Generate features
-uv run python WARprojections/05_extract_global.py          # Extract global T20 data
-uv run python WARprojections/06_league_strength.py         # Calculate league factors
-uv run python WARprojections/07_global_features.py         # Generate global features
-uv run python WARprojections/04_train_model.py             # Train IPL-only model
-uv run python WARprojections/08_train_global_model.py      # Train global model
-uv run python WARprojections/09_marcel_baseline.py         # Generate Marcel projections
-uv run python WARprojections/10_comprehensive_analysis.py  # Compare all models
+uv run python WARprojections/03_feature_engineering.py     # Base features
+uv run python WARprojections/05_extract_global.py          # Global T20 data
+uv run python WARprojections/06_league_strength.py         # League factors
+uv run python WARprojections/07_global_features.py         # Global features
+uv run python WARprojections/03b_phase_features.py         # Phase + form features
+uv run python WARprojections/03c_situational_features.py   # Situational features
+uv run python WARprojections/09_marcel_baseline.py         # Marcel baseline
+uv run python WARprojections/04_train_model_v6_production.py  # V6 Production model
+uv run python WARprojections/11_combine_projections.py     # Combine all sources
+uv run python WARprojections/12_global_to_ipl_model.py     # Global-only predictions
+uv run python WARprojections/13_score_auction_pool.py      # Score auction players
 ```
 
+---
+
+## Phase 8: Production & Auction Scoring (Dec 2024)
+
+### V6 Production Model (`04_train_model_v6_production.py`)
+
+The V6 Production model trains on **ALL available data** (2008-2024), including the 2024→2025 transition:
+
+| Model | Training Data | Use Case |
+|-------|---------------|----------|
+| V6 (backtest) | 2008-2023 | Validated on 2025 actuals |
+| **V6 Production** | 2008-2024 | Best for 2026 forecasting |
+
+### Global-to-IPL Translation Model (`12_global_to_ipl_model.py`)
+
+Predicts IPL performance for players with **NO IPL history** using global T20 data:
+
+| Metric | Batters | Bowlers |
+|--------|---------|---------|
+| CV R² | 0.21 | 0.13 |
+| Players Scored | 3,567 | 2,647 |
+
+**Key Features**: T20I balls (49%), franchise balls (14%), global RAA per ball (15%)
+
+### Combined Projections (`11_combine_projections.py`)
+
+Merges predictions with priority: V6 > Marcel > Global-only
+
+### Auction Pool Scoring (`13_score_auction_pool.py`)
+
+Scores all players in `data/ipl_2026_auction_enriched.csv`:
+
+| Source | Coverage |
+|--------|----------|
+| V6_Production | 52 players |
+| Marcel | 63 players |
+| Global-Only | 119 players |
+| No Data (0 WAR) | 116 players |
+
+---
+
 ## Outputs
-*   **Projections**: `results/WARprojections/batter_projections_2026.csv` & `bowler_projections_2026.csv`
-*   **Backtest Results**: `results/WARprojections/batter_backtest_2025.csv` & `bowler_backtest_2025.csv`
-*   **Model Comparison**: `results/WARprojections/model_comparison_report.md`
 
-## File Reference
+### Best Model (V6 Production)
+- `results/WARprojections/v6_production/batter_projections_2026_prod.csv`
+- `results/WARprojections/v6_production/bowler_projections_2026_prod.csv`
 
-| Model | Season | Role | File Path |
-| :--- | :--- | :--- | :--- |
-| **Marcel** | 2025 (Backtest) | Batter | `marcel/batter_projections_2025.csv` |
-| **Marcel** | 2025 (Backtest) | Bowler | `marcel/bowler_projections_2025.csv` |
-| **Marcel** | 2026 (Forecast) | Batter | `marcel/batter_projections_2026.csv` |
-| **Marcel** | 2026 (Forecast) | Bowler | `marcel/bowler_projections_2026.csv` |
-| **IPL ML** | 2025 (Backtest) | Batter | `batter_backtest_2025.csv` |
-| **IPL ML** | 2025 (Backtest) | Bowler | `bowler_backtest_2025.csv` |
-| **IPL ML** | 2026 (Forecast) | Batter | `batter_projections_2026.csv` |
-| **IPL ML** | 2026 (Forecast) | Bowler | `bowler_projections_2026.csv` |
-| **Global ML** | 2025 (Backtest) | Batter | `batter_backtest_2025_global.csv` |
-| **Global ML** | 2025 (Backtest) | Bowler | `bowler_backtest_2025_global.csv` |
-| **Global ML** | 2026 (Forecast) | Batter | `batter_projections_2026_global.csv` |
-| **Global ML** | 2026 (Forecast) | Bowler | `bowler_projections_2026_global.csv` |
+### Combined (All Sources)
+- `results/WARprojections/combined_2026/batter_projections_2026_combined.csv`
+- `results/WARprojections/combined_2026/bowler_projections_2026_combined.csv`
 
+### Global-Only (No IPL History)
+- `results/WARprojections/global_only/batter_global_only_predictions.csv`
+- `results/WARprojections/global_only/bowler_global_only_predictions.csv`
+
+### Auction Pool
+- `results/WARprojections/auction_2026/auction_pool_war_projections.csv`
+
+### All Models Comparison
+
+| Model | Folder | Batters R² | Bowlers R² |
+|-------|--------|------------|------------|
+| Marcel | `marcel/` | 0.16 | 0.23 |
+| V2 (IPL ML) | root | 0.08 | 0.23 |
+| V3 | `v3/` | 0.16 | 0.27 |
+| V4 | `v4/` | 0.17 | 0.29 |
+| V5 | `v5/` | 0.24 | 0.32 |
+| **V6** | **`v6/`** | **0.25** | **0.35** |
+| **V6 Prod** | **`v6_production/`** | N/A | N/A |
+| Global-Only | `global_only/` | 0.21 (CV) | 0.13 (CV) |
+
+---
+
+## Script Reference
+
+| Script | Purpose |
+|--------|---------|
+| `01_extract_full_history.py` | Extract IPL ball-by-ball data |
+| `02_calculate_metrics.py` | Calculate WAR, RAA, LI |
+| `03_feature_engineering.py` | Base ML features |
+| `03b_phase_features.py` | Phase-specific RAA (powerplay/middle/death) |
+| `03c_situational_features.py` | Chasing/setting, batting position |
+| `04_train_model.py` | V2 IPL-only model |
+| `04_train_model_v3.py` - `v6.py` | Improved model versions |
+| `04_train_model_v6_production.py` | **Production model (best)** |
+| `05_extract_global.py` | Extract global T20 data |
+| `06_league_strength.py` | Calculate league difficulty factors |
+| `07_global_features.py` | Global T20 features |
+| `08_train_global_model.py` | Global-enhanced model |
+| `09_marcel_baseline.py` | Marcel projection system |
+| `10_comprehensive_analysis.py` | Model comparison |
+| `11_combine_projections.py` | Merge all prediction sources |
+| `12_global_to_ipl_model.py` | Predict IPL WAR from global-only data |
+| `13_score_auction_pool.py` | Score auction players |
+
+---
+
+## Recommendations
+
+- **Use V6 Production for 2026 forecasting**: Trained on most recent data
+- **Use Combined projections for full coverage**: Includes all players
+- **Use Global-Only for new players**: Players without IPL history
+- **Batting projections**: V6 (R² 0.25) is ~210% better than V2 baseline
+- **Bowling projections**: V6 (R² 0.35) is ~52% better than V2 baseline
+
+---
+
+## Phase 9: V9 Enhanced Model (Dec 2024) - CURRENT BEST
+
+The V9 model introduces **opponent quality** and **rolling form** features, achieving the best performance yet.
+
+### New Features (`19_feature_engineering_v9.py`)
+
+| Feature | Description | Importance |
+|---------|-------------|------------|
+| `opponent_adj_raa_per_ball` | RAA weighted by opponent team strength | **#2 for both roles** |
+| `form_trend` | Recent 5 vs older 5 matches (improving/declining) | #5-6 |
+| `form_volatility` | Standard deviation of recent match performances | #7-8 |
+| `last_10_form` | Average RAA/ball in last 10 IPL matches | #7 |
+| `decay_weighted_form` | Exponentially weighted recent form | #9 |
+| `last_5_form`, `last_15_form` | Additional rolling windows | Lower |
+
+### Model Performance - 2025 Backtest
+
+| Model | Batters R² | Bowlers R² | Improvement |
+|-------|------------|------------|-------------|
+| V6 (Previous Best) | 0.246 | **0.351** | Baseline |
+| V7 (Unified) | 0.245 | 0.321 | +Global integration |
+| **V9 (Enhanced)** | **0.270** | 0.350 | **+9.7% batters** |
+
+**Key Finding**: V9 improves batter predictions by 9.7% while matching V6 for bowlers.
+
+### V9 Production Model (`22_train_v9_production.py`)
+
+Trained on ALL data through 2025 for 2026 forecasting:
+
+```bash
+uv run python WARprojections/22_train_v9_production.py
+```
+
+**Outputs**:
+- `results/WARprojections/v9_production/batter_projections_2026_v9prod.csv`
+- `results/WARprojections/v9_production/bowler_projections_2026_v9prod.csv`
+
+---
+
+## Phase 10: Improved Auction Scoring (Dec 2024)
+
+### Coverage Improvement
+
+| Version | Coverage | Key Change |
+|---------|----------|------------|
+| V1 (Legacy) | 66.9% (234/350) | Name matching only |
+| V2 | 66.9% (234/350) | Added cricsheet ID matching |
+| V3 | 72.6% (254/350) | Combined V7+V8 models |
+| **V4/V9 Prod** | **96.9% (339/350)** | **Aggressive matching + role-aware** |
+
+### Key Improvements
+
+1. **ID-First Matching** (`14_score_auction_v2.py`):
+   - 190 players matched by cricsheet ID
+   - Falls back to name → fuzzy matching
+
+2. **V8 Domestic Model** (`16_domestic_model_v8.py`):
+   - Predicts IPL potential for players WITHOUT prior IPL history
+   - Uses SMAT/domestic T20 data (156K balls)
+   - CV R²: Batters 0.247, Bowlers 0.170
+   - **Adds 173 players** previously at replacement level
+
+3. **Role-Aware Matching** (`23_score_auction_v9prod.py`):
+   - Bowlers check bowler lookups first
+   - Batters check batter lookups first
+   - Prevents cross-role name collisions (e.g., Pathirana fix)
+
+### Final Auction File
+
+**Location**: `results/WARprojections/auction_2026_v9prod/auction_war_projections_v9prod.csv`
+
+**Columns**:
+- `player` - Player name
+- `country` - Nationality
+- `role` - Playing role (Batter/Bowler/Allrounder/WK)
+- `base_price` - Base auction price (₹ Lakh)
+- `capped` - C (Capped), U (Uncapped), A (Associate)
+- `projected_war_2026` - V9 Production WAR projection
+- `prediction_source` - Model used (V9_Production/Marcel/V8_Domestic/Global_Only)
+- `match_method` - How player was matched (ID/Name/Fuzzy)
+
+### Prediction Source Priority
+
+1. **V9_Production** - Best model for players with 2025 IPL data
+2. **Marcel** - Simple weighted average for lower-volume players  
+3. **V8_Domestic** - For uncapped players with SMAT/franchise data
+4. **Global_Only** - For players with only international T20 data
+5. **Replacement_Level** - 0 WAR (only 11 players)
+
+---
+
+## Visualization (`24_visualize_auction.py`)
+
+Creates an interactive Plotly chart:
+
+```bash
+uv run python WARprojections/24_visualize_auction.py
+open results/WARprojections/auction_2026_v9prod/auction_war_visualization.html
+```
+
+**Features**:
+- X-axis: Base Price (₹ Lakh)
+- Y-axis: Projected WAR
+- Color coding by prediction source
+- Hover for player details
+- Annotations for top 5 players
+
+---
+
+## Quick Start - 2026 Auction Analysis
+
+For new analysts, run this minimal pipeline:
+
+```bash
+cd /Users/aryamangupta/CricML/Auction_analysis
+
+# Generate V9 features (if not exists)
+uv run python WARprojections/19_feature_engineering_v9.py
+
+# Train V9 production model
+uv run python WARprojections/22_train_v9_production.py
+
+# Score auction players
+uv run python WARprojections/23_score_auction_v9prod.py
+
+# Generate visualization
+uv run python WARprojections/24_visualize_auction.py
+```
+
+**Output**: `results/WARprojections/auction_2026_v9prod/auction_war_projections_v9prod.csv`
+
+---
+
+## Complete Script Reference
+
+| Script | Purpose |
+|--------|---------|
+| **Data Extraction** | |
+| `01_extract_full_history.py` | Extract IPL ball-by-ball data |
+| `05_extract_global.py` | Extract global T20 data |
+| **Metrics & Features** | |
+| `02_calculate_metrics.py` | Calculate WAR, RAA, LI |
+| `03_feature_engineering.py` | Base ML features |
+| `03b_phase_features.py` | Phase-specific RAA |
+| `03c_situational_features.py` | Chasing/setting features |
+| `06_league_strength.py` | League difficulty factors |
+| `07_global_features.py` | Global T20 features |
+| `09_marcel_baseline.py` | Marcel projection system |
+| **`19_feature_engineering_v9.py`** | **V9: Opponent quality + form features** |
+| **Models** | |
+| `04_train_model.py` - `v6.py` | Legacy model versions |
+| `04_train_model_v6_production.py` | V6 Production model |
+| `08_train_global_model.py` | Global-enhanced model |
+| `15_unified_model_v7.py` | V7 Unified (IPL+Global+Marcel) |
+| `16_domestic_model_v8.py` | V8 Domestic (no IPL history) |
+| **`20_train_model_v9.py`** | **V9 backtest model** |
+| **`22_train_v9_production.py`** | **V9 Production (BEST)** |
+| **Auction Scoring** | |
+| `11_combine_projections.py` | Merge prediction sources (legacy) |
+| `12_global_to_ipl_model.py` | Predict from global-only data |
+| `13_score_auction_pool.py` | Legacy auction scoring |
+| `14_score_auction_v2.py` | ID-first matching |
+| `17_compare_models.py` | Model comparison report |
+| `18_score_auction_v3.py` | Combined V7+V8 scoring |
+| **`23_score_auction_v9prod.py`** | **V9 Production scoring (BEST)** |
+| **`24_visualize_auction.py`** | **Interactive WAR visualization** |
+
+---
+
+## Final Model Comparison
+
+| Model | Folder | Batters R² | Bowlers R² | Use Case |
+|-------|--------|------------|------------|----------|
+| Marcel | `marcel/` | 0.08 | 0.21 | Baseline |
+| V6 | `v6_production/` | 0.246 | 0.351 | Previous best |
+| V7 Unified | `v7_unified/` | 0.245 | 0.321 | IPL+Global |
+| V8 Domestic | `v8_domestic/` | 0.247 (CV) | 0.170 (CV) | No IPL history |
+| **V9 Production** | **`v9_production/`** | **0.270** | **0.350** | **CURRENT BEST** |
+
+---
+
+## Recommendations
+
+- **Use V9 Production for 2026 forecasting**: Best accuracy, full 2025 data
+- **Use `23_score_auction_v9prod.py` for auction analysis**: 96.9% coverage
+- **Batting projections**: V9 (R² 0.27) is +9.7% vs V6, +237% vs V2
+- **Bowling projections**: V9 (R² 0.35) matches V6 (theoretical ceiling)
+- **Opponent quality matters**: #2 most important feature for both roles
+
+## Theoretical Ceiling
+
+For reference, even baseball WAR projections (with far more data and a more stable game) typically achieve R² of 0.3-0.4. Our V9 model at R² 0.35 for bowlers is approaching this theoretical limit for cricket.

@@ -24,6 +24,23 @@ CSV files containing the top identified targets for specific roles:
 *   `results/analysis/strategic/target_death_bowlers.csv` (Death Bowlers)
 *   `results/analysis/strategic/target_pp_pacers.csv` (Powerplay Pacers)
 
+### 4. Comprehensive Auction Analytics
+A master analytics table for all 350 auction players with WAR projections, price predictions, and phase-by-phase statistics.
+
+*   **CSV Data**: [`results/analysis/auction_2026_comprehensive.csv`](results/analysis/auction_2026_comprehensive.csv)
+    *   350 players × 90 columns
+    *   WAR projections (V9_Production, Marcel, Global)
+    *   Price predictions (VOMAM, VOPE)
+    *   Phase-by-phase batting stats (SR, RAA, dot%, boundary%)
+    *   Phase-by-phase bowling stats (Econ, wickets, SR, RAA, dot%)
+    *   Both IPL-only and All-Cricket combined stats
+
+*   **Interactive Table**: [`results/analysis/auction_2026_interactive.html`](results/analysis/auction_2026_interactive.html)
+    *   Filter by Role, Country, Capped Status, WAR Source
+    *   Range filters for Base Price, WAR, Age, Avg Price
+    *   Column group toggles (Core/Batting/Bowling)
+    *   Export to CSV/Excel
+
 ---
 
 ## 🛠️ Methodology
@@ -77,6 +94,12 @@ uv run python scripts/analysis/strategic_analysis.py
 
 # 3. Generate the HTML Blog
 uv run python scripts/analysis/generate_blog.py
+
+# 4. Generate Comprehensive Auction Analytics (350 players × 90 columns)
+uv run python scripts/analysis/generate_comprehensive_auction.py
+
+# 5. Generate Interactive Table with Filters
+uv run python scripts/analysis/generate_interactive_table.py
 ```
 
 ## 📝 Notes
