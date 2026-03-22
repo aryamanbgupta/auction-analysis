@@ -36,6 +36,8 @@ cricWAR/
 ├── data/
 │   ├── ipl_matches.parquet          # All IPL ball-by-ball data
 │   └── player_metadata.csv          # From cricketdata package
+├── data_refresh/
+│   └── refresh_cricsheet.py         # Automated Cricsheet data downloader
 ├── notebooks/
 │   ├── 01_war_results_visualization.ipynb     # All-time WAR analysis
 │   ├── 02_expected_runs_validation.ipynb      # Model validation
@@ -87,6 +89,24 @@ uv add jupyter ipykernel matplotlib seaborn
 # Register Jupyter kernel
 uv run python -m ipykernel install --user --name=cricwar --display-name="Python (cricWAR)"
 ```
+
+## Data Refresh
+
+To update match data from Cricsheet before retraining models:
+
+```bash
+# Download latest data for all competitions to staging
+uv run python data_refresh/refresh_cricsheet.py --full
+
+# Review verification table, then deploy to data/
+uv run python data_refresh/refresh_cricsheet.py --deploy
+
+# Or for quick updates during a tournament (last 30 days only)
+uv run python data_refresh/refresh_cricsheet.py --incremental
+uv run python data_refresh/refresh_cricsheet.py --deploy
+```
+
+Supports 12 T20 competitions (IPL, BBL, PSL, CPL, T20 Blast, BPL, SMAT, T20Is, SA20, ILT20, MLC, MSL). See [`data_refresh/README.md`](data_refresh/README.md) for full documentation.
 
 ## Usage
 

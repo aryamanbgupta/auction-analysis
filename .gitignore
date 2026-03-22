@@ -43,3 +43,7 @@ results/
 htmlcov/
 .pytest_cache/
 .ruff_cache/
+
+# Data refresh staging and temp files
+data_refresh/staging/
+data_refresh/*.zip
