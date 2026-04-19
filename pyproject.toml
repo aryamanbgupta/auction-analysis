@@ -39,6 +39,7 @@ dependencies = [
     "python-espncricinfo>=0.5.8",
     "xgboost>=3.1.2",
     "shap>=0.49.1",
+    "openpyxl>=3.1.5",
 ]
 
 [project.optional-dependencies]
